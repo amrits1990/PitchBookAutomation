@@ -284,6 +284,41 @@ class FinancialDatabase:
                     );
                 """)
                 
+                # Ratio definitions table (hybrid: global and company-specific)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS ratio_definitions (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        name VARCHAR(100) NOT NULL,
+                        company_id UUID REFERENCES companies(id), -- NULL = global ratio
+                        formula TEXT NOT NULL,
+                        description TEXT,
+                        category VARCHAR(50),
+                        is_active BOOLEAN DEFAULT true,
+                        created_by VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(name, company_id) -- Allows same name for global and company-specific
+                    );
+                """)
+                
+                # Calculated ratios table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS calculated_ratios (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        company_id UUID NOT NULL REFERENCES companies(id),
+                        ratio_definition_id UUID NOT NULL REFERENCES ratio_definitions(id),
+                        ticker VARCHAR(10) NOT NULL,
+                        period_end_date DATE NOT NULL,
+                        period_type VARCHAR(2) NOT NULL CHECK (period_type IN ('Q1', 'Q2', 'Q3', 'Q4', 'FY', 'LTM')),
+                        fiscal_year INTEGER,
+                        ratio_value DECIMAL(15,6),
+                        calculation_inputs JSONB, -- Store the actual values used in calculation
+                        data_source VARCHAR(20) DEFAULT 'LTM', -- 'LTM', 'quarterly', 'annual'
+                        calculation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(company_id, ratio_definition_id, period_end_date, period_type, data_source)
+                    );
+                """)
+                
                 # Create indexes for better performance
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_companies_ticker ON companies(ticker);
@@ -305,6 +340,15 @@ class FinancialDatabase:
                     CREATE INDEX IF NOT EXISTS idx_cash_flow_statements_fiscal_year ON cash_flow_statements(fiscal_year);
                     
                     CREATE INDEX IF NOT EXISTS idx_processing_metadata_ticker ON processing_metadata(ticker);
+                    
+                    CREATE INDEX IF NOT EXISTS idx_ratio_definitions_name ON ratio_definitions(name);
+                    CREATE INDEX IF NOT EXISTS idx_ratio_definitions_company ON ratio_definitions(company_id);
+                    CREATE INDEX IF NOT EXISTS idx_ratio_definitions_category ON ratio_definitions(category);
+                    
+                    CREATE INDEX IF NOT EXISTS idx_calculated_ratios_company ON calculated_ratios(company_id);
+                    CREATE INDEX IF NOT EXISTS idx_calculated_ratios_ticker ON calculated_ratios(ticker);
+                    CREATE INDEX IF NOT EXISTS idx_calculated_ratios_period ON calculated_ratios(period_end_date, period_type);
+                    CREATE INDEX IF NOT EXISTS idx_calculated_ratios_definition ON calculated_ratios(ratio_definition_id);
                 """)
                 
                 self.connection.commit()
@@ -610,6 +654,88 @@ class FinancialDatabase:
                 
         except psycopg2.Error as e:
             logger.error(f"Error getting {table_name} for {ticker}: {e}")
+            return []
+    
+    def get_calculated_ratios(self, ticker: str, ratio_name: Optional[str] = None, 
+                            category: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Get calculated ratios for a company
+        
+        Args:
+            ticker: Company ticker symbol
+            ratio_name: Specific ratio name (optional)
+            category: Filter by ratio category (optional)
+            limit: Maximum number of ratios to return
+            
+        Returns:
+            List of calculated ratio dictionaries
+        """
+        try:
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                query = """
+                    SELECT 
+                        cr.ticker, cr.period_end_date, cr.period_type, cr.ratio_value,
+                        cr.calculation_inputs, cr.data_source, cr.calculation_date,
+                        rd.name, rd.description, rd.category, rd.formula
+                    FROM calculated_ratios cr
+                    JOIN ratio_definitions rd ON cr.ratio_definition_id = rd.id
+                    WHERE cr.ticker = %s
+                """
+                params = [ticker.upper()]
+                
+                if ratio_name:
+                    query += " AND rd.name = %s"
+                    params.append(ratio_name)
+                
+                if category:
+                    query += " AND rd.category = %s"
+                    params.append(category)
+                
+                query += " ORDER BY rd.category, rd.name, cr.period_end_date DESC"
+                
+                if limit:
+                    query += " LIMIT %s"
+                    params.append(limit)
+                
+                cursor.execute(query, params)
+                return cursor.fetchall()
+                
+        except Exception as e:
+            logger.error(f"Error getting calculated ratios for {ticker}: {e}")
+            return []
+    
+    def get_ratio_definitions_for_company(self, company_id: uuid.UUID) -> List[Dict[str, Any]]:
+        """
+        Get all ratio definitions for a company (hybrid: company-specific + global)
+        
+        Args:
+            company_id: Company UUID
+            
+        Returns:
+            List of ratio definition dictionaries
+        """
+        try:
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    WITH company_ratios AS (
+                        SELECT *, 1 as priority FROM ratio_definitions 
+                        WHERE company_id = %s AND is_active = true
+                    ),
+                    global_ratios AS (
+                        SELECT *, 2 as priority FROM ratio_definitions 
+                        WHERE company_id IS NULL AND is_active = true
+                        AND name NOT IN (SELECT name FROM company_ratios)
+                    )
+                    SELECT * FROM company_ratios
+                    UNION ALL
+                    SELECT * FROM global_ratios
+                    ORDER BY priority, category, name
+                """, (company_id,))
+                
+                return cursor.fetchall()
+                
+        except Exception as e:
+            logger.error(f"Error getting ratio definitions for company {company_id}: {e}")
             return []
     
     def close(self):

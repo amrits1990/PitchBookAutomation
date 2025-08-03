@@ -229,3 +229,71 @@ class ProcessingMetadata(BaseModel):
             datetime: lambda v: v.isoformat(),
             uuid.UUID: lambda v: str(v)
         }
+
+
+class RatioDefinition(BaseModel):
+    """Ratio definition model for storing ratio formulas and metadata"""
+    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4)
+    name: str = Field(..., max_length=100, description="Ratio name (e.g., 'ROE', 'Current_Ratio')")
+    company_id: Optional[uuid.UUID] = Field(None, description="Company ID for company-specific ratios (NULL = global)")
+    formula: str = Field(..., description="Mathematical formula using field names (e.g., 'net_income / total_stockholders_equity')")
+    description: Optional[str] = Field(None, description="Human-readable description of the ratio")
+    category: Optional[str] = Field(None, max_length=50, description="Ratio category (e.g., 'profitability', 'liquidity')")
+    is_active: bool = Field(default=True, description="Whether this ratio definition is active")
+    created_by: Optional[str] = Field(None, max_length=100, description="User who created this ratio")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    @validator('name')
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Ratio name cannot be empty')
+        # Replace spaces with underscores for consistency
+        return v.strip().replace(' ', '_')
+    
+    @validator('formula')
+    def validate_formula(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Formula cannot be empty')
+        return v.strip()
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            uuid.UUID: lambda v: str(v)
+        }
+
+
+class CalculatedRatio(BaseModel):
+    """Calculated ratio result model"""
+    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4)
+    company_id: uuid.UUID = Field(..., description="Company UUID")
+    ratio_definition_id: uuid.UUID = Field(..., description="Ratio definition UUID")
+    ticker: str = Field(..., max_length=10, description="Company ticker")
+    period_end_date: date = Field(..., description="Period end date for the ratio calculation")
+    period_type: Literal["Q1", "Q2", "Q3", "Q4", "FY", "LTM"] = Field(..., description="Period type")
+    fiscal_year: Optional[int] = Field(None, description="Fiscal year (may be None for LTM)")
+    ratio_value: Optional[Decimal] = Field(None, description="Calculated ratio value")
+    calculation_inputs: Optional[dict] = Field(None, description="Input values used in calculation")
+    data_source: str = Field(default="LTM", description="Source of data used (LTM, quarterly, annual)")
+    calculation_date: datetime = Field(default_factory=datetime.utcnow, description="When the ratio was calculated")
+    
+    @validator('ticker')
+    def validate_ticker(cls, v):
+        return v.upper() if v else v
+    
+    @validator('ratio_value')
+    def validate_ratio_value(cls, v):
+        if v is not None:
+            # Check for reasonable ratio bounds (optional - can be adjusted)
+            if abs(v) > 1000000:  # Very large ratios might indicate data issues
+                raise ValueError('Ratio value seems unreasonably large')
+        return v
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            date: lambda v: v.isoformat(),
+            uuid.UUID: lambda v: str(v),
+            Decimal: lambda v: float(v)
+        }

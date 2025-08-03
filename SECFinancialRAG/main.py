@@ -43,7 +43,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def process_company_financials(ticker: str, validate_data: bool = True, filing_preference: str = 'latest', generate_ltm: bool = False) -> Dict[str, Any]:
+def process_company_financials(ticker: str, validate_data: bool = True, filing_preference: str = 'latest', 
+                              generate_ltm: bool = False, calculate_ratios: bool = False) -> Dict[str, Any]:
     """
     Process financial statements for a company by ticker
     
@@ -52,6 +53,7 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
         validate_data: Whether to run data validation after processing
         filing_preference: Which filing to use when multiple exist for same period ('original' or 'latest')
         generate_ltm: Whether to automatically generate LTM files after processing
+        calculate_ratios: Whether to calculate financial ratios using LTM data
         
     Returns:
         Dictionary with processing results and summary
@@ -264,6 +266,25 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
         else:
             logger.debug(f"LTM generation not requested for {ticker}")
         
+        # Calculate financial ratios if requested
+        ratio_results = None
+        if calculate_ratios and metadata.processing_status == "success":
+            try:
+                logger.info(f"Calculating financial ratios for {ticker}")
+                from .ratio_calculator import calculate_ratios_for_company
+                ratio_results = calculate_ratios_for_company(ticker)
+                if ratio_results and 'ratios' in ratio_results:
+                    logger.info(f"Successfully calculated {ratio_results.get('total_ratios', 0)} ratios for {ticker}")
+                else:
+                    logger.warning(f"No ratios calculated for {ticker}: {ratio_results}")
+            except Exception as e:
+                logger.error(f"Error calculating ratios for {ticker}: {e}")
+                ratio_results = {'error': str(e)}
+        elif calculate_ratios:
+            logger.warning(f"Ratio calculation skipped for {ticker} - processing_status: {metadata.processing_status}")
+        else:
+            logger.debug(f"Ratio calculation not requested for {ticker}")
+        
         result = {
             'ticker': ticker,
             'status': metadata.processing_status,  # Use 'status' consistently
@@ -279,7 +300,8 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
                 'fiscal_years': None   # Will be populated from validation if available
             },
             'validation': validation_results,
-            'ltm_export': ltm_export_results
+            'ltm_export': ltm_export_results,
+            'ratios': ratio_results
         }
         
         # Update summary with validation data if available
@@ -306,14 +328,16 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
         }
 
 
-def process_multiple_companies(tickers: List[str], validate_data: bool = True, filing_preference: str = 'latest') -> Dict[str, Dict[str, Any]]:
+def process_multiple_companies(tickers: List[str], validate_data: bool = True, filing_preference: str = 'latest', 
+                              calculate_ratios: bool = False) -> Dict[str, Dict[str, Any]]:
     """
     Process financial statements for multiple companies
     
     Args:
         tickers: List of company ticker symbols
         validate_data: Whether to run data validation after processing
-        filing_preference: Which filing to use when multiple exist for same period ('original' or 'latest')
+        filing_preference: Which filing to use when multiple exist for same period ('original' or 'latest')  
+        calculate_ratios: Whether to calculate financial ratios using LTM data
         
     Returns:
         Dictionary mapping ticker to processing results
@@ -324,7 +348,7 @@ def process_multiple_companies(tickers: List[str], validate_data: bool = True, f
     
     for ticker in tickers:
         try:
-            result = process_company_financials(ticker, validate_data, filing_preference)
+            result = process_company_financials(ticker, validate_data, filing_preference, calculate_ratios=calculate_ratios)
             results[ticker] = result
             
             # Log progress
@@ -668,3 +692,149 @@ def get_system_status() -> Dict[str, Any]:
             status['environment_variables'][var] = value or 'NOT SET'
     
     return status
+
+
+# Ratio calculation functions
+def calculate_company_ratios(ticker: str) -> Dict[str, Any]:
+    """
+    Calculate financial ratios for a company using LTM data
+    
+    Args:
+        ticker: Company ticker symbol
+        
+    Returns:
+        Dictionary with calculated ratios and metadata
+    """
+    try:
+        from .ratio_calculator import calculate_ratios_for_company
+        return calculate_ratios_for_company(ticker)
+    except ImportError:
+        from ratio_calculator import calculate_ratios_for_company
+        return calculate_ratios_for_company(ticker)
+
+
+def get_company_ratios(ticker: str, category: Optional[str] = None) -> List[Dict]:
+    """
+    Get stored financial ratios for a company
+    
+    Args:
+        ticker: Company ticker symbol
+        category: Filter by ratio category (optional)
+        
+    Returns:
+        List of calculated ratio dictionaries
+    """
+    try:
+        from .ratio_calculator import get_stored_ratios
+        return get_stored_ratios(ticker, category)
+    except ImportError:
+        from ratio_calculator import get_stored_ratios
+        return get_stored_ratios(ticker, category)
+
+
+def initialize_default_ratios(created_by: str = "system") -> int:
+    """
+    Initialize default ratio definitions in the database
+    
+    Args:
+        created_by: User who is initializing the ratios
+        
+    Returns:
+        Number of ratios created
+    """
+    try:
+        from .ratio_manager import initialize_default_ratios as init_ratios
+        return init_ratios(created_by)
+    except ImportError:
+        from ratio_manager import initialize_default_ratios as init_ratios
+        return init_ratios(created_by)
+
+
+def create_company_specific_ratio(ticker: str, name: str, formula: str, 
+                                description: str = None, category: str = None) -> bool:
+    """
+    Create a company-specific ratio definition
+    
+    Args:
+        ticker: Company ticker
+        name: Ratio name
+        formula: Mathematical formula using field names
+        description: Ratio description
+        category: Ratio category
+        
+    Returns:
+        True if created successfully, False otherwise
+    """
+    try:
+        from .ratio_manager import create_company_ratio
+        return create_company_ratio(ticker, name, formula, description, category)
+    except ImportError:
+        from ratio_manager import create_company_ratio
+        return create_company_ratio(ticker, name, formula, description, category)
+
+
+def get_ratio_definitions(ticker: str = None) -> List[Dict]:
+    """
+    Get ratio definitions for a company (or global if no ticker provided)
+    
+    Args:
+        ticker: Company ticker (optional, returns global ratios if None)
+        
+    Returns:
+        List of ratio definition dictionaries
+    """
+    try:
+        if ticker:
+            from .ratio_manager import get_company_ratio_definitions
+            return get_company_ratio_definitions(ticker)
+        else:
+            from .ratio_manager import RatioManager
+            with RatioManager() as manager:
+                return manager.get_all_ratio_definitions()
+    except ImportError:
+        if ticker:
+            from ratio_manager import get_company_ratio_definitions
+            return get_company_ratio_definitions(ticker)
+        else:
+            from ratio_manager import RatioManager
+            with RatioManager() as manager:
+                return manager.get_all_ratio_definitions()
+
+
+def export_ratio_data(ticker: str, output_file: str, format: str = 'csv') -> bool:
+    """
+    Export calculated ratios to file
+    
+    Args:
+        ticker: Company ticker symbol
+        output_file: Output file path
+        format: Export format ('csv', 'json', 'excel')
+        
+    Returns:
+        True if export successful, False otherwise
+    """
+    try:
+        ratios = get_company_ratios(ticker)
+        if not ratios:
+            logger.warning(f"No ratio data to export for {ticker}")
+            return False
+        
+        import pandas as pd
+        df = pd.DataFrame(ratios)
+        
+        if format.lower() == 'csv':
+            df.to_csv(output_file, index=False)
+        elif format.lower() == 'json':
+            df.to_json(output_file, orient='records', date_format='iso', indent=2)
+        elif format.lower() == 'excel':
+            df.to_excel(output_file, index=False)
+        else:
+            logger.error(f"Unsupported export format: {format}")
+            return False
+        
+        logger.info(f"Exported {ticker} ratios to {output_file}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error exporting ratio data for {ticker}: {e}")
+        return False
