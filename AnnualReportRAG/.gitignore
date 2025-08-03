@@ -1,0 +1,15 @@
+# Downloaded SEC filings (raw data)
+filings/
+
+# RAG processed data
+rag_ready_data/
+
+# Processing results
+batch_processing_results.json
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
