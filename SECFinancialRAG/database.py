@@ -308,9 +308,11 @@ class FinancialDatabase:
                         company_id UUID NOT NULL REFERENCES companies(id),
                         ratio_definition_id UUID NOT NULL REFERENCES ratio_definitions(id),
                         ticker VARCHAR(10) NOT NULL,
+                        ratio_name VARCHAR(100) NOT NULL,  -- Add ratio name for easy querying
                         period_end_date DATE NOT NULL,
-                        period_type VARCHAR(2) NOT NULL CHECK (period_type IN ('Q1', 'Q2', 'Q3', 'Q4', 'FY', 'LTM')),
-                        fiscal_year INTEGER,
+                        period_type VARCHAR(3) NOT NULL CHECK (period_type IN ('Q1', 'Q2', 'Q3', 'Q4', 'FY', 'LTM')),
+                        fiscal_year INTEGER NOT NULL,  -- Make fiscal_year NOT NULL
+                        fiscal_quarter VARCHAR(3),  -- Add fiscal quarter (Q1, Q2, Q3, Q4)
                         ratio_value DECIMAL(15,6),
                         calculation_inputs JSONB, -- Store the actual values used in calculation
                         data_source VARCHAR(20) DEFAULT 'LTM', -- 'LTM', 'quarterly', 'annual'

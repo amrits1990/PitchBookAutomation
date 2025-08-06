@@ -12,6 +12,64 @@ A comprehensive financial statement RAG system that fetches real financial data 
 - **Virtual Fields**: Intelligent handling of inconsistent financial line items across companies
 - **Data Validation**: Comprehensive validation and error handling
 
+## 🚀 Standalone Package Interface
+
+**For external projects - simple one-line usage:**
+
+```python
+import SECFinancialRAG as sfr
+
+# Get comprehensive financial data as pandas DataFrame
+df = sfr.get_financial_data('AAPL')
+
+# df contains:
+# - All LTM income statement and cash flow data
+# - All point-in-time balance sheet data  
+# - All calculated financial ratios
+# - Data indexed by period_end_date
+```
+
+### DataFrame Structure
+
+The returned DataFrame contains:
+
+| Column | Description |
+|--------|-------------|
+| `ticker` | Company ticker symbol |
+| `period_end_date` | Period end date (index) |
+| `period_type` | Q1, Q2, Q3, Q4, FY, LTM |
+| `data_source` | LTM, point_in_time, calculated |
+| `statement_type` | income_statement, balance_sheet, cash_flow, ratio |
+| `fiscal_year` | Fiscal year |
+| *Financial Fields* | All financial statement line items |
+| *Ratio Fields* | All calculated financial ratios |
+
+### Multiple Companies
+
+```python
+# Get data for multiple companies
+df_multi = sfr.get_multiple_companies_data(['AAPL', 'MSFT', 'GOOGL'])
+
+# Filter and analyze
+revenue_comparison = df_multi[df_multi['data_source'] == 'LTM'][['ticker', 'total_revenue']]
+```
+
+### Filtering Examples
+
+```python
+# Get only LTM data
+ltm_data = df[df['data_source'] == 'LTM']
+
+# Get only ratios
+ratios = df[df['statement_type'] == 'ratio']
+
+# Get only balance sheet data
+balance_sheet = df[df['statement_type'] == 'balance_sheet']
+
+# Get latest period data
+latest = df[df['period_end_date'] == df['period_end_date'].max()]
+```
+
 ## Quick Start
 
 ### Basic Usage

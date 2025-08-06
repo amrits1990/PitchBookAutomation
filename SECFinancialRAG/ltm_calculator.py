@@ -814,6 +814,39 @@ class LTMCalculator:
             logger.error(f"Error getting FY data for {ticker}: {e}")
             return []
     
+    def get_latest_ltm_data(self, ticker: str, statement_type: str = 'income_statement') -> Optional[Dict]:
+        """
+        Get the most recent LTM data for a company
+        
+        Args:
+            ticker: Company ticker symbol
+            statement_type: 'income_statement' or 'cash_flow'
+            
+        Returns:
+            Dictionary with latest LTM financial data or None
+        """
+        try:
+            ltm_records = self.calculate_ltm_for_all_quarters(ticker, statement_type)
+            
+            if not ltm_records:
+                logger.warning(f"No LTM records found for {ticker} {statement_type}")
+                return None
+            
+            # Sort by period end date and get the most recent
+            # Use 'period_end_date' field, not 'ltm_period_end'
+            ltm_records.sort(key=lambda x: x.get('period_end_date', ''), reverse=True)
+            latest_record = ltm_records[0]
+            
+            # Add ltm_period_end field for compatibility
+            latest_record['ltm_period_end'] = latest_record.get('period_end_date')
+            
+            logger.debug(f"Retrieved latest LTM data for {ticker} {statement_type}: {latest_record.get('period_end_date')}")
+            return latest_record
+            
+        except Exception as e:
+            logger.error(f"Error getting latest LTM data for {ticker}: {e}")
+            return None
+    
     def get_ltm_summary(self, ticker: str, statement_type: str = 'income_statement') -> Dict[str, Any]:
         """
         Get summary of LTM calculations for a company

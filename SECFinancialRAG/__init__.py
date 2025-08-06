@@ -28,9 +28,18 @@ from .main import (
     export_ratio_data
 )
 from .ltm_calculator import LTMCalculator, calculate_ltm_income_statement, calculate_ltm_cash_flow, get_all_ltm_data
-from .ratio_calculator import RatioCalculator
+from .simple_ratio_calculator import SimpleRatioCalculator, calculate_ratios_simple, get_stored_ratios_simple
+from .growth_ratio_calculator import GrowthRatioCalculator, calculate_company_growth_ratios, get_company_growth_ratios
 from .ratio_manager import RatioManager
 from .virtual_fields import VirtualFieldResolver
+# Standalone interface - main entry points for external packages
+from .standalone_interface import (
+    get_financial_data,  # Main standalone function
+    get_multiple_companies_data,
+    get_company_ratios_only,
+    get_company_ltm_only,
+    get_company_financial_data
+)
 
 __version__ = "1.0.0"
 
@@ -68,8 +77,13 @@ __all__ = [
     "initialize_default_ratios",
     "create_company_specific_ratio",
     "get_ratio_definitions",
-    "export_ratio_data",
-    "RatioCalculator",
+    "export_ratio_data", 
+    "SimpleRatioCalculator",
+    "calculate_ratios_simple", 
+    "get_stored_ratios_simple",
+    "GrowthRatioCalculator",
+    "calculate_company_growth_ratios",
+    "get_company_growth_ratios",
     "RatioManager",
     "VirtualFieldResolver",
     # LTM functionality
@@ -77,6 +91,12 @@ __all__ = [
     "calculate_ltm_income_statement",
     "calculate_ltm_cash_flow", 
     "get_all_ltm_data",
+    # Standalone interface - primary entry points
+    "get_financial_data",  # Main standalone function
+    "get_multiple_companies_data",
+    "get_company_ratios_only", 
+    "get_company_ltm_only",
+    "get_company_financial_data",
     # Aliases
     "get_financial_metrics",  # Alias
     "get_ltm_metrics"  # Alias

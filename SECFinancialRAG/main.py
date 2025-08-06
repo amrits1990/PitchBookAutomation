@@ -271,7 +271,7 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
         if calculate_ratios and metadata.processing_status == "success":
             try:
                 logger.info(f"Calculating financial ratios for {ticker}")
-                from .ratio_calculator import calculate_ratios_for_company
+                from .simple_ratio_calculator import calculate_ratios_simple as calculate_ratios_for_company
                 ratio_results = calculate_ratios_for_company(ticker)
                 if ratio_results and 'ratios' in ratio_results:
                     logger.info(f"Successfully calculated {ratio_results.get('total_ratios', 0)} ratios for {ticker}")
@@ -706,11 +706,11 @@ def calculate_company_ratios(ticker: str) -> Dict[str, Any]:
         Dictionary with calculated ratios and metadata
     """
     try:
-        from .ratio_calculator import calculate_ratios_for_company
-        return calculate_ratios_for_company(ticker)
+        from .simple_ratio_calculator import calculate_ratios_simple
+        return calculate_ratios_simple(ticker)
     except ImportError:
-        from ratio_calculator import calculate_ratios_for_company
-        return calculate_ratios_for_company(ticker)
+        from simple_ratio_calculator import calculate_ratios_simple
+        return calculate_ratios_simple(ticker)
 
 
 def get_company_ratios(ticker: str, category: Optional[str] = None) -> List[Dict]:
@@ -725,11 +725,11 @@ def get_company_ratios(ticker: str, category: Optional[str] = None) -> List[Dict
         List of calculated ratio dictionaries
     """
     try:
-        from .ratio_calculator import get_stored_ratios
-        return get_stored_ratios(ticker, category)
+        from .simple_ratio_calculator import get_stored_ratios_simple
+        return get_stored_ratios_simple(ticker, category)
     except ImportError:
-        from ratio_calculator import get_stored_ratios
-        return get_stored_ratios(ticker, category)
+        from simple_ratio_calculator import get_stored_ratios_simple
+        return get_stored_ratios_simple(ticker, category)
 
 
 def initialize_default_ratios(created_by: str = "system") -> int:

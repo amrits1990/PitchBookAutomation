@@ -136,7 +136,7 @@ class RatioManager:
                         WHERE name = %s AND (company_id = %s OR company_id IS NULL)
                         ORDER BY company_id NULLS LAST
                         LIMIT 1
-                    """, (name, company_id))
+                    """, (name, str(company_id) if company_id else None))
                 else:
                     # Only global ratios
                     cursor.execute("""
@@ -170,55 +170,49 @@ class RatioManager:
         """
         try:
             with self.database.connection.cursor() as cursor:
+                # Build base conditions
+                conditions = []
+                if category:
+                    conditions.append("category = %s")
+                
+                if active_only:
+                    conditions.append("is_active = true")
+                
+                condition_str = f" AND {' AND '.join(conditions)}" if conditions else ""
+                
                 # Build query based on parameters
                 if company_id:
                     # Get both company-specific and global ratios (company-specific take precedence)
-                    query = """
+                    query = f"""
                         WITH company_ratios AS (
                             SELECT *, 1 as priority FROM ratio_definitions 
-                            WHERE company_id = %s
+                            WHERE company_id = %s{condition_str}
                         ),
                         global_ratios AS (
                             SELECT *, 2 as priority FROM ratio_definitions 
-                            WHERE company_id IS NULL
+                            WHERE company_id IS NULL{condition_str}
                             AND name NOT IN (SELECT name FROM company_ratios)
                         )
                         SELECT * FROM company_ratios
                         UNION ALL
                         SELECT * FROM global_ratios
+                        ORDER BY priority, category, name
                     """
-                    params = [company_id]
+                    params = [str(company_id) if company_id else None]
+                    if category:
+                        params.extend([category, category])  # For both CTEs
                 else:
                     # Only global ratios
-                    query = """
+                    query = f"""
                         SELECT *, 1 as priority FROM ratio_definitions 
-                        WHERE company_id IS NULL
+                        WHERE company_id IS NULL{condition_str}
+                        ORDER BY priority, category, name
                     """
                     params = []
-                
-                # Add filters
-                conditions = []
+                    
+                # Add category parameter if specified
                 if category:
-                    conditions.append("category = %s")
                     params.append(category)
-                
-                if active_only:
-                    conditions.append("is_active = true")
-                
-                if conditions:
-                    if company_id:
-                        # Modify the CTE queries to include conditions
-                        query = query.replace(
-                            "WHERE company_id = %s", 
-                            f"WHERE company_id = %s AND {' AND '.join(conditions)}"
-                        ).replace(
-                            "WHERE company_id IS NULL",
-                            f"WHERE company_id IS NULL AND {' AND '.join(conditions)}"
-                        )
-                    else:
-                        query += f" WHERE {' AND '.join(conditions)}"
-                
-                query += " ORDER BY priority, category, name"
                 
                 cursor.execute(query, params)
                 results = cursor.fetchall()
@@ -264,7 +258,7 @@ class RatioManager:
             # Always update the updated_at timestamp
             update_fields.append("updated_at = %s")
             params.append(datetime.utcnow())
-            params.append(ratio_id)
+            params.append(str(ratio_id) if ratio_id else None)
             
             with self.database.connection.cursor() as cursor:
                 query = f"""
@@ -310,7 +304,7 @@ class RatioManager:
                         SET is_active = false, updated_at = %s
                         WHERE id = %s
                         RETURNING name
-                    """, (datetime.utcnow(), ratio_id))
+                    """, (datetime.utcnow(), str(ratio_id) if ratio_id else None))
                 else:
                     # Hard delete - remove completely
                     # Note: This will fail if there are calculated ratios referencing this definition
@@ -318,7 +312,7 @@ class RatioManager:
                         DELETE FROM ratio_definitions 
                         WHERE id = %s
                         RETURNING name
-                    """, (ratio_id,))
+                    """, (str(ratio_id) if ratio_id else None,))
                 
                 result = cursor.fetchone()
                 
@@ -365,7 +359,7 @@ class RatioManager:
             # Create the ratio definition
             ratio_def = RatioDefinition(
                 name=name,
-                company_id=company_id,
+                company_id=str(company_id) if company_id else None,
                 formula=formula,
                 description=description,
                 category=category,
@@ -442,13 +436,13 @@ class RatioManager:
                         'description': ratio_config.get('description'),
                         'category': ratio_config.get('category')
                     }
-                    if self.update_ratio_definition(existing['id'], updates):
+                    if self.update_ratio_definition(uuid.UUID(existing['id']), updates):
                         imported_count += 1
                 else:
                     # Create new ratio
                     ratio_def = RatioDefinition(
                         name=ratio_config['name'],
-                        company_id=company_id,
+                        company_id=str(company_id) if company_id else None,
                         formula=ratio_config['formula'],
                         description=ratio_config.get('description'),
                         category=ratio_config.get('category'),
@@ -486,4 +480,4 @@ def get_company_ratio_definitions(ticker: str) -> List[Dict]:
         if not company_info:
             return []
         
-        return manager.get_all_ratio_definitions(company_info['id'])
+        return manager.get_all_ratio_definitions(uuid.UUID(company_info['id']))
