@@ -116,6 +116,7 @@ class SimpleRatioCalculator:
                                 'ratio_definition_id': ratio_def['id'],
                                 'ticker': ticker,
                                 'ratio_name': ratio_name,
+                                'ratio_category': ratio_def.get('category'),
                                 'period_end_date': period_end_date,
                                 'period_type': combined_data.get('period_type', 'LTM'),
                                 'fiscal_year': fiscal_year,
@@ -442,13 +443,14 @@ class SimpleRatioCalculator:
                 for ratio in calculated_ratios:
                     cursor.execute("""
                         INSERT INTO calculated_ratios (
-                            company_id, ratio_definition_id, ticker, ratio_name,
+                            company_id, ratio_definition_id, ticker, ratio_name, ratio_category,
                             period_end_date, period_type, fiscal_year, fiscal_quarter,
                             ratio_value, calculation_inputs, data_source
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (company_id, ratio_definition_id, period_end_date, period_type, data_source)
                         DO UPDATE SET
                             ratio_name = EXCLUDED.ratio_name,
+                            ratio_category = EXCLUDED.ratio_category,
                             fiscal_year = EXCLUDED.fiscal_year,
                             fiscal_quarter = EXCLUDED.fiscal_quarter,
                             ratio_value = EXCLUDED.ratio_value,
@@ -456,9 +458,9 @@ class SimpleRatioCalculator:
                             calculation_date = CURRENT_TIMESTAMP
                     """, (
                         ratio['company_id'], ratio['ratio_definition_id'], ratio['ticker'],
-                        ratio['ratio_name'], ratio['period_end_date'], ratio['period_type'],
-                        ratio['fiscal_year'], ratio['fiscal_quarter'], ratio['ratio_value'],
-                        json.dumps(ratio['calculation_inputs']) if ratio['calculation_inputs'] else None,
+                        ratio['ratio_name'], ratio.get('ratio_category'), ratio['period_end_date'], 
+                        ratio['period_type'], ratio['fiscal_year'], ratio['fiscal_quarter'], 
+                        ratio['ratio_value'], json.dumps(ratio['calculation_inputs']) if ratio['calculation_inputs'] else None,
                         ratio['data_source']
                     ))
                 

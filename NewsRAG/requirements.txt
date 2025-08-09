@@ -1,0 +1,26 @@
+# NewsRAG Package Requirements
+
+# Core dependencies
+tavily-python>=0.3.0
+python-dateutil>=2.8.0
+
+# Optional dependencies for enhanced functionality
+# Uncomment as needed:
+
+# For better text processing
+# nltk>=3.8
+# spacy>=3.4.0
+
+# For advanced company name extraction
+# transformers>=4.20.0
+# torch>=1.12.0
+
+# For caching
+# redis>=4.3.0
+# joblib>=1.1.0
+
+# For development and testing
+# pytest>=7.0.0
+# pytest-cov>=3.0.0
+# black>=22.0.0
+# isort>=5.10.0

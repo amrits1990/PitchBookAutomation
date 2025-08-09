@@ -1,0 +1,18 @@
+# SharePriceRAG Package Dependencies
+
+# Database
+psycopg2-binary>=2.9.0
+
+# API clients
+requests>=2.28.0
+yfinance>=0.2.12
+
+# Data handling
+pandas>=1.5.0
+
+# Utilities
+python-dateutil>=2.8.0
+python-dotenv>=1.0.0
+
+# Optional: Enhanced logging
+structlog>=22.0.0

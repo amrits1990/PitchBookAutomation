@@ -99,9 +99,15 @@ class RatioManager:
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    ratio_def.name, ratio_def.company_id, ratio_def.formula,
-                    ratio_def.description, ratio_def.category, ratio_def.is_active,
-                    ratio_def.created_by, ratio_def.created_at, ratio_def.updated_at
+                    ratio_def.name, 
+                    str(ratio_def.company_id) if ratio_def.company_id else None,
+                    ratio_def.formula,
+                    ratio_def.description, 
+                    ratio_def.category, 
+                    ratio_def.is_active,
+                    ratio_def.created_by, 
+                    ratio_def.created_at, 
+                    ratio_def.updated_at
                 ))
                 
                 ratio_id = cursor.fetchone()[0]
@@ -359,7 +365,7 @@ class RatioManager:
             # Create the ratio definition
             ratio_def = RatioDefinition(
                 name=name,
-                company_id=str(company_id) if company_id else None,
+                company_id=uuid.UUID(company_id) if isinstance(company_id, str) else company_id,
                 formula=formula,
                 description=description,
                 category=category,

@@ -182,7 +182,7 @@ class GrowthRatioCalculator:
                 previous_revenue = previous_stmt.get('total_revenue')
                 
                 if current_revenue and previous_revenue and previous_revenue != 0:
-                    revenue_growth = ((current_revenue - previous_revenue) / previous_revenue) * 100
+                    revenue_growth = (current_revenue - previous_revenue) / previous_revenue
                     
                     revenue_ratio = {
                         'company_id': company_id,
@@ -204,14 +204,14 @@ class GrowthRatioCalculator:
                     }
                     
                     all_growth_ratios.append(revenue_ratio)
-                    logger.debug(f"Calculated Revenue Growth for FY{current_fy}: {revenue_growth:.2f}%")
+                    logger.debug(f"Calculated Revenue Growth for FY{current_fy}: {revenue_growth:.4f}")
                 
                 # Calculate EBIT Growth (as proxy for EBITDA)
                 current_ebit = current_stmt.get('ebit') or current_stmt.get('operating_income')
                 previous_ebit = previous_stmt.get('ebit') or previous_stmt.get('operating_income')
                 
                 if current_ebit and previous_ebit and previous_ebit != 0:
-                    ebit_growth = ((current_ebit - previous_ebit) / previous_ebit) * 100
+                    ebit_growth = (current_ebit - previous_ebit) / previous_ebit
                     
                     ebit_ratio = {
                         'company_id': company_id,
@@ -233,7 +233,7 @@ class GrowthRatioCalculator:
                     }
                     
                     all_growth_ratios.append(ebit_ratio)
-                    logger.debug(f"Calculated EBIT Growth for FY{current_fy}: {ebit_growth:.2f}%")
+                    logger.debug(f"Calculated EBIT Growth for FY{current_fy}: {ebit_growth:.4f}")
             
             # Store growth ratios
             stored_count = 0
@@ -405,8 +405,8 @@ class GrowthRatioCalculator:
                 logger.debug(f"Skipping {ratio_name}: current={current_value}, previous={previous_value}")
                 continue
             
-            # Calculate growth rate: ((Current - Previous) / Previous) * 100
-            growth_rate = ((float(current_value) - float(previous_value)) / float(previous_value)) * 100
+            # Calculate growth rate: (Current - Previous) / Previous
+            growth_rate = (float(current_value) - float(previous_value)) / float(previous_value)
             
             # Determine period type and fiscal info
             period_type = current_period.get('period_type', 'LTM')
@@ -438,7 +438,7 @@ class GrowthRatioCalculator:
             }
             
             growth_ratios.append(growth_ratio)
-            logger.debug(f"Calculated {ratio_name} for {current_date}: {growth_rate:.2f}% "
+            logger.debug(f"Calculated {ratio_name} for {current_date}: {growth_rate:.4f} "
                         f"(vs {previous_date}, {days_diff} days apart)")
         
         return growth_ratios
@@ -463,13 +463,14 @@ class GrowthRatioCalculator:
             with self.database.connection.cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO calculated_ratios (
-                        company_id, ratio_definition_id, ticker, ratio_name,
+                        company_id, ratio_definition_id, ticker, ratio_name, ratio_category,
                         period_end_date, period_type, fiscal_year, fiscal_quarter,
                         ratio_value, calculation_inputs, data_source
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (company_id, ratio_definition_id, period_end_date, period_type, data_source)
                     DO UPDATE SET
                         ratio_name = EXCLUDED.ratio_name,
+                        ratio_category = EXCLUDED.ratio_category,
                         fiscal_year = EXCLUDED.fiscal_year,
                         fiscal_quarter = EXCLUDED.fiscal_quarter,
                         ratio_value = EXCLUDED.ratio_value,
@@ -480,6 +481,7 @@ class GrowthRatioCalculator:
                     ratio_definition_id,
                     ratio_data['ticker'],
                     ratio_data['name'],
+                    ratio_data.get('category', 'growth'),  # Add category
                     ratio_data['period_end_date'],
                     ratio_data['fiscal_quarter'],  # period_type
                     ratio_data['fiscal_year'],

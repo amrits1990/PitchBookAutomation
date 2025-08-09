@@ -309,6 +309,7 @@ class FinancialDatabase:
                         ratio_definition_id UUID NOT NULL REFERENCES ratio_definitions(id),
                         ticker VARCHAR(10) NOT NULL,
                         ratio_name VARCHAR(100) NOT NULL,  -- Add ratio name for easy querying
+                        ratio_category VARCHAR(50),  -- Add ratio category from ratio definitions
                         period_end_date DATE NOT NULL,
                         period_type VARCHAR(3) NOT NULL CHECK (period_type IN ('Q1', 'Q2', 'Q3', 'Q4', 'FY', 'LTM')),
                         fiscal_year INTEGER NOT NULL,  -- Make fiscal_year NOT NULL
@@ -351,6 +352,7 @@ class FinancialDatabase:
                     CREATE INDEX IF NOT EXISTS idx_calculated_ratios_ticker ON calculated_ratios(ticker);
                     CREATE INDEX IF NOT EXISTS idx_calculated_ratios_period ON calculated_ratios(period_end_date, period_type);
                     CREATE INDEX IF NOT EXISTS idx_calculated_ratios_definition ON calculated_ratios(ratio_definition_id);
+                    CREATE INDEX IF NOT EXISTS idx_calculated_ratios_category ON calculated_ratios(ratio_category);
                 """)
                 
                 self.connection.commit()
@@ -678,6 +680,7 @@ class FinancialDatabase:
                     SELECT 
                         cr.ticker, cr.period_end_date, cr.period_type, cr.ratio_value,
                         cr.calculation_inputs, cr.data_source, cr.calculation_date,
+                        cr.ratio_category,
                         rd.name, rd.description, rd.category, rd.formula
                     FROM calculated_ratios cr
                     JOIN ratio_definitions rd ON cr.ratio_definition_id = rd.id
