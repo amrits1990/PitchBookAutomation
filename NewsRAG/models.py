@@ -18,6 +18,7 @@ class NewsCategory(Enum):
     REGULATORY = "regulatory"
     MARKET = "market"
     FINANCIAL = "financial"
+    BUSINESS = "business"
     GENERAL = "general"
 
 

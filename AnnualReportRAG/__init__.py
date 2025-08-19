@@ -10,6 +10,11 @@ from .metadata_extractor import MetadataExtractor
 from .content_processor import ContentProcessor
 from .chunk_generator import ChunkGenerator
 from .config_manager import get_config
+# Import simplified agent interfaces (now with built-in vector database integration)
+from .agent_interface import (
+    index_reports_for_agent,
+    search_report_for_agent,
+)
 
 __version__ = "1.0.0"
 
@@ -19,5 +24,7 @@ __all__ = [
     "MetadataExtractor",
     "ContentProcessor",
     "ChunkGenerator",
-    "get_config"
+    "get_config",
+    "index_reports_for_agent",
+    "search_report_for_agent",
 ]

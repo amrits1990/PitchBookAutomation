@@ -49,6 +49,14 @@ class NewsConfig:
     def __post_init__(self):
         """Post-initialization validation and setup"""
         
+        # Load .env file if available
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()  # Load from current directory
+            load_dotenv("../.env")  # Load from parent directory
+        except ImportError:
+            pass  # dotenv not available
+        
         # Load API key from environment if not provided
         if not self.tavily_api_key:
             self.tavily_api_key = os.getenv("TAVILY_API_KEY", "")

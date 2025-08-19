@@ -3,6 +3,7 @@
 # Core dependencies
 tavily-python>=0.3.0
 python-dateutil>=2.8.0
+python-dotenv>=0.19.0
 
 # Optional dependencies for enhanced functionality
 # Uncomment as needed:

@@ -12,14 +12,14 @@ from datetime import datetime, timedelta
 from functools import wraps
 
 # Import all the modules we created
-from data_source_interface import (
+from .data_source_interface import (
     TranscriptQuery, DataSourceError, transcript_registry
 )
-from alpha_vantage_source import register_alpha_vantage_source
-from transcript_metadata_extractor import TranscriptMetadataExtractor
-from transcript_content_processor import TranscriptContentProcessor
-from transcript_chunk_generator import TranscriptChunkGenerator
-from transcript_config import (
+from .alpha_vantage_source import register_alpha_vantage_source
+from .transcript_metadata_extractor import TranscriptMetadataExtractor
+from .transcript_content_processor import TranscriptContentProcessor
+from .transcript_chunk_generator import TranscriptChunkGenerator
+from .transcript_config import (
     get_transcript_config, get_transcript_config_manager,
     validate_transcript_environment
 )

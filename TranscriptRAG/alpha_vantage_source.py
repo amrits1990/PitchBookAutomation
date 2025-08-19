@@ -13,7 +13,7 @@ import re
 import json
 from dataclasses import asdict
 
-from data_source_interface import (
+from .data_source_interface import (
     TranscriptDataSource, TranscriptData, TranscriptQuery, 
     DataSourceError, transcript_registry
 )

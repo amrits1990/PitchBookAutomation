@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
-from data_source_interface import TranscriptData
+from .data_source_interface import TranscriptData
 
 
 @dataclass

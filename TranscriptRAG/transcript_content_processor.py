@@ -7,7 +7,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
-from data_source_interface import TranscriptData
+from .data_source_interface import TranscriptData
 
 
 class TranscriptContentProcessor:

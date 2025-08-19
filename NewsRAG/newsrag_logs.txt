@@ -73,3 +73,186 @@
 2025-08-09 17:08:35,614 - NewsRAG.main - INFO - Processing completed successfully in 19.11 seconds
 2025-08-09 17:08:35,614 - NewsRAG.main - INFO - Generated 15 chunks from 15 articles
 2025-08-09 17:08:35,638 - NewsRAG.main - INFO - Results saved to apple_news_example.json
+2025-08-19 23:19:48,503 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-08-19 23:19:48,526 - NewsRAG.main - ERROR - Error in news processing: 'business' is not a valid NewsCategory
+2025-08-19 23:19:48,552 - AgentSystem.vector_store.lance_store - INFO - Indexing 52 documents into table 'comprehensive_demo'
+2025-08-19 23:19:48,552 - AgentSystem.vector_store.lance_store - INFO - Loading embedding model: all-MiniLM-L6-v2
+2025-08-19 23:19:48,552 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2025-08-19 23:19:48,552 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-08-19 23:34:29,342 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-08-19 23:34:29,343 - NewsRAG.main - INFO - Processing news for companies: ['AAPL']
+2025-08-19 23:34:29,343 - NewsRAG.main - INFO - Categories: ['general', 'business']
+2025-08-19 23:34:29,343 - NewsRAG.main - INFO - Date range: 30 days back
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>, <NewsCategory.BUSINESS: 'business'>], days_back=30, max_articles_per_query=20, include_similar=True)
+2025-08-19 23:34:29,344 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-08-19 23:34:29,345 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category general
+2025-08-19 23:34:32,651 - NewsRAG.tavily_direct - INFO - Retrieved 20 chunks for AAPL - general
+2025-08-19 23:34:32,651 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category business
+2025-08-19 23:34:35,233 - NewsRAG.tavily_direct - INFO - Retrieved 20 chunks for AAPL - business
+2025-08-19 23:34:35,233 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 20
+2025-08-19 23:34:35,233 - NewsRAG.main - INFO - Retrieved 20 ready-to-use chunks
+2025-08-19 23:34:35,233 - NewsRAG.main - INFO - Processing completed successfully in 5.90 seconds
+2025-08-19 23:34:35,233 - NewsRAG.main - INFO - Generated 20 chunks from 20 articles
+2025-08-19 23:34:35,233 - AgentSystem.vector_store.lance_store - INFO - Indexing 20 documents into table 'news'
+2025-08-19 23:34:35,233 - AgentSystem.vector_store.lance_store - INFO - Loading embedding model: all-mpnet-base-v2
+2025-08-19 23:34:35,233 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2025-08-19 23:34:35,233 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-mpnet-base-v2
+2025-08-19 23:34:45,509 - AgentSystem.vector_store.rag_integration - INFO - Indexed 20 chunks in vector store table 'news'
+2025-08-19 23:34:45,656 - AgentSystem.vector_store.rag_integration - INFO - Used vector search for table 'news', found 5 results
+2025-08-19 23:34:45,658 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-08-19 23:34:45,658 - NewsRAG.main - INFO - Processing news for companies: ['AAPL']
+2025-08-19 23:34:45,658 - NewsRAG.main - INFO - Categories: ['general']
+2025-08-19 23:34:45,658 - NewsRAG.main - INFO - Date range: 30 days back
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=10, include_similar=True)
+2025-08-19 23:34:45,659 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-08-19 23:34:45,659 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category general
+2025-08-19 23:34:48,130 - NewsRAG.tavily_direct - INFO - Retrieved 10 chunks for AAPL - general
+2025-08-19 23:34:48,130 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 10
+2025-08-19 23:34:48,146 - NewsRAG.main - INFO - Retrieved 10 ready-to-use chunks
+2025-08-19 23:34:48,146 - NewsRAG.main - INFO - Processing completed successfully in 2.49 seconds
+2025-08-19 23:34:48,146 - NewsRAG.main - INFO - Generated 10 chunks from 10 articles
+2025-08-19 23:34:48,169 - AgentSystem.vector_store.lance_store - INFO - Indexing 62 documents into table 'comprehensive_demo'
+2025-08-19 23:34:48,169 - AgentSystem.vector_store.lance_store - INFO - Loading embedding model: all-mpnet-base-v2
+2025-08-19 23:34:48,169 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2025-08-19 23:34:48,169 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-mpnet-base-v2
+2025-08-19 23:45:54,918 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-08-19 23:45:54,918 - NewsRAG.main - INFO - Processing news for companies: ['AAPL']
+2025-08-19 23:45:54,919 - NewsRAG.main - INFO - Categories: ['general', 'business']
+2025-08-19 23:45:54,919 - NewsRAG.main - INFO - Date range: 30 days back
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>, <NewsCategory.BUSINESS: 'business'>], days_back=30, max_articles_per_query=20, include_similar=True)
+2025-08-19 23:45:54,919 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-08-19 23:45:54,919 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category general
+2025-08-19 23:45:56,215 - NewsRAG.tavily_direct - INFO - Retrieved 20 chunks for AAPL - general
+2025-08-19 23:45:56,215 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category business
+2025-08-19 23:45:58,511 - NewsRAG.tavily_direct - INFO - Retrieved 20 chunks for AAPL - business
+2025-08-19 23:45:58,511 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 20
+2025-08-19 23:45:58,511 - NewsRAG.main - INFO - Retrieved 20 ready-to-use chunks
+2025-08-19 23:45:58,511 - NewsRAG.main - INFO - Processing completed successfully in 3.59 seconds
+2025-08-19 23:45:58,511 - NewsRAG.main - INFO - Generated 20 chunks from 20 articles
+2025-08-19 23:45:58,511 - AgentSystem.vector_store.lance_store - INFO - Indexing 20 documents into table 'news'
+2025-08-19 23:45:58,511 - AgentSystem.vector_store.lance_store - INFO - Loading embedding model: all-mpnet-base-v2
+2025-08-19 23:45:58,527 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2025-08-19 23:45:58,527 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-mpnet-base-v2
+2025-08-19 23:46:07,439 - AgentSystem.vector_store.rag_integration - INFO - Indexed 20 chunks in vector store table 'news'
+2025-08-19 23:46:07,509 - AgentSystem.vector_store.rag_integration - INFO - Used vector search for table 'news', found 5 results
+2025-08-19 23:46:07,520 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-08-19 23:46:07,520 - NewsRAG.main - INFO - Processing news for companies: ['AAPL']
+2025-08-19 23:46:07,520 - NewsRAG.main - INFO - Categories: ['general']
+2025-08-19 23:46:07,520 - NewsRAG.main - INFO - Date range: 30 days back
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=10, include_similar=True)
+2025-08-19 23:46:07,520 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-08-19 23:46:07,520 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category general
+2025-08-19 23:46:08,726 - NewsRAG.tavily_direct - INFO - Retrieved 10 chunks for AAPL - general
+2025-08-19 23:46:08,726 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 10
+2025-08-19 23:46:08,726 - NewsRAG.main - INFO - Retrieved 10 ready-to-use chunks
+2025-08-19 23:46:08,726 - NewsRAG.main - INFO - Processing completed successfully in 1.22 seconds
+2025-08-19 23:46:08,726 - NewsRAG.main - INFO - Generated 10 chunks from 10 articles
+2025-08-19 23:46:08,762 - alpha_vantage_2153940695664 - INFO - Generating quarters for date range: 2023-08-25 to 2024-08-24
+2025-08-19 23:46:08,762 - alpha_vantage_2153940695664 - INFO - Starting quarter generation for AAPL
+2025-08-19 23:46:08,763 - alpha_vantage_2153940695664 - INFO - Making API request: OVERVIEW for AAPL
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - API response received in 0.39 seconds
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - API request successful - response structure unknown
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Fiscal year end month for AAPL: September
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Fiscal year ends in September (month 9)
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Calculated quarter start months: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Fiscal quarter start months: [10, 1, 4, 7]
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Starting quarter iteration from 2024-08-24 00:00:00
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2024-08-24 (month 8)
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Detected quarter: 4
+2025-08-19 23:46:09,151 - alpha_vantage_2153940695664 - INFO - Result: 2024-08-24 -> fiscal 2024Q4
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Iteration 1: 2024-08-24 -> 2024Q4
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Added quarter: 2024Q4
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2024-08-24 (month 8)
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Detected quarter: 4
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Result: 2024-08-24 -> fiscal 2024Q4
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Current position: 2024Q4
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Previous quarter: 2024Q3
+2025-08-19 23:46:09,157 - alpha_vantage_2153940695664 - INFO - Previous quarter date: 2024-04-15
+2025-08-19 23:46:09,159 - alpha_vantage_2153940695664 - INFO - Moving from 2024-08-24 to 2024-04-15
+2025-08-19 23:46:09,159 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2024-04-15 (month 4)
+2025-08-19 23:46:09,159 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,159 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,160 - alpha_vantage_2153940695664 - INFO - Detected quarter: 3
+2025-08-19 23:46:09,160 - alpha_vantage_2153940695664 - INFO - Result: 2024-04-15 -> fiscal 2024Q3
+2025-08-19 23:46:09,160 - alpha_vantage_2153940695664 - INFO - Iteration 2: 2024-04-15 -> 2024Q3
+2025-08-19 23:46:09,161 - alpha_vantage_2153940695664 - INFO - Added quarter: 2024Q3
+2025-08-19 23:46:09,161 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2024-04-15 (month 4)
+2025-08-19 23:46:09,161 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,161 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,161 - alpha_vantage_2153940695664 - INFO - Detected quarter: 3
+2025-08-19 23:46:09,163 - alpha_vantage_2153940695664 - INFO - Result: 2024-04-15 -> fiscal 2024Q3
+2025-08-19 23:46:09,163 - alpha_vantage_2153940695664 - INFO - Current position: 2024Q3
+2025-08-19 23:46:09,163 - alpha_vantage_2153940695664 - INFO - Previous quarter: 2024Q2
+2025-08-19 23:46:09,163 - alpha_vantage_2153940695664 - INFO - Previous quarter date: 2024-01-15
+2025-08-19 23:46:09,163 - alpha_vantage_2153940695664 - INFO - Moving from 2024-04-15 to 2024-01-15
+2025-08-19 23:46:09,163 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2024-01-15 (month 1)
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Detected quarter: 2
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Result: 2024-01-15 -> fiscal 2024Q2
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Iteration 3: 2024-01-15 -> 2024Q2
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Added quarter: 2024Q2
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2024-01-15 (month 1)
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Detected quarter: 2
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Result: 2024-01-15 -> fiscal 2024Q2
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Current position: 2024Q2
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Previous quarter: 2024Q1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Previous quarter date: 2023-10-15
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Moving from 2024-01-15 to 2023-10-15
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2023-10-15 (month 10)
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Detected quarter: 1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Result: 2023-10-15 -> fiscal 2024Q1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Iteration 4: 2023-10-15 -> 2024Q1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Added quarter: 2024Q1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Determining fiscal year/quarter for 2023-10-15 (month 10)
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Quarter starts: Q1=10, Q2=1, Q3=4, Q4=7
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Fiscal year end month: 9
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Detected quarter: 1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Result: 2023-10-15 -> fiscal 2024Q1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Current position: 2024Q1
+2025-08-19 23:46:09,164 - alpha_vantage_2153940695664 - INFO - Previous quarter: 2023Q4
+2025-08-19 23:46:09,169 - alpha_vantage_2153940695664 - INFO - Previous quarter date: 2023-07-15
+2025-08-19 23:46:09,169 - alpha_vantage_2153940695664 - INFO - Moving from 2023-10-15 to 2023-07-15
+2025-08-19 23:46:09,169 - alpha_vantage_2153940695664 - INFO - Quarter generation complete: 4 quarters generated in 4 iterations
+2025-08-19 23:46:09,169 - alpha_vantage_2153940695664 - INFO - Generated 4 quarters to check: ['2024Q4', '2024Q3', '2024Q2', '2024Q1']
+2025-08-19 23:46:09,169 - alpha_vantage_2153940695664 - INFO - Processing quarter 1/4: 2024Q4
+2025-08-19 23:46:09,170 - alpha_vantage_2153940695664 - INFO - Making API request: EARNINGS_CALL_TRANSCRIPT for AAPL 2024Q4
+2025-08-19 23:46:09,170 - alpha_vantage_2153940695664 - INFO - Rate limiting: Waiting 3.0 seconds (configured delay: 3s)
+2025-08-19 23:46:13,028 - alpha_vantage_2153940695664 - INFO - API response received in 0.88 seconds
+2025-08-19 23:46:13,028 - alpha_vantage_2153940695664 - INFO - Successfully retrieved transcript with 70 entries
+2025-08-19 23:46:13,028 - alpha_vantage_2153940695664 - INFO - ✓ Successfully retrieved transcript for 2024Q4
+2025-08-19 23:46:13,043 - alpha_vantage_2153940695664 - INFO - Processing quarter 2/4: 2024Q3
+2025-08-19 23:46:13,046 - alpha_vantage_2153940695664 - INFO - Making API request: EARNINGS_CALL_TRANSCRIPT for AAPL 2024Q3
+2025-08-19 23:46:13,048 - alpha_vantage_2153940695664 - INFO - Rate limiting: Waiting 3.0 seconds (configured delay: 3s)
+2025-08-19 23:46:17,309 - alpha_vantage_2153940695664 - INFO - API response received in 1.28 seconds
+2025-08-19 23:46:17,309 - alpha_vantage_2153940695664 - INFO - Successfully retrieved transcript with 74 entries
+2025-08-19 23:46:17,309 - alpha_vantage_2153940695664 - INFO - ✓ Successfully retrieved transcript for 2024Q3
+2025-08-19 23:46:17,325 - alpha_vantage_2153940695664 - INFO - Processing quarter 3/4: 2024Q2
+2025-08-19 23:46:17,325 - alpha_vantage_2153940695664 - INFO - Making API request: EARNINGS_CALL_TRANSCRIPT for AAPL 2024Q2
+2025-08-19 23:46:17,329 - alpha_vantage_2153940695664 - INFO - Rate limiting: Waiting 3.0 seconds (configured delay: 3s)
+2025-08-19 23:46:21,595 - alpha_vantage_2153940695664 - INFO - API response received in 1.28 seconds
+2025-08-19 23:46:21,610 - alpha_vantage_2153940695664 - INFO - Successfully retrieved transcript with 83 entries
+2025-08-19 23:46:21,610 - alpha_vantage_2153940695664 - INFO - ✓ Successfully retrieved transcript for 2024Q2
+2025-08-19 23:46:21,610 - alpha_vantage_2153940695664 - INFO - Processing quarter 4/4: 2024Q1
+2025-08-19 23:46:21,617 - alpha_vantage_2153940695664 - INFO - Making API request: EARNINGS_CALL_TRANSCRIPT for AAPL 2024Q1
+2025-08-19 23:46:21,618 - alpha_vantage_2153940695664 - INFO - Rate limiting: Waiting 3.0 seconds (configured delay: 3s)
+2025-08-19 23:46:25,840 - alpha_vantage_2153940695664 - INFO - API response received in 1.24 seconds
+2025-08-19 23:46:25,845 - alpha_vantage_2153940695664 - INFO - Successfully retrieved transcript with 63 entries
+2025-08-19 23:46:25,845 - alpha_vantage_2153940695664 - INFO - ✓ Successfully retrieved transcript for 2024Q1
+2025-08-19 23:46:25,850 - alpha_vantage_2153940695664 - INFO - Transcript fetching complete: 4 transcripts found out of 4 quarters checked
+2025-08-19 23:46:26,134 - AgentSystem.vector_store.lance_store - INFO - Indexing 61 documents into table 'comprehensive_demo'
+2025-08-19 23:46:26,134 - AgentSystem.vector_store.lance_store - INFO - Loading embedding model: all-mpnet-base-v2
+2025-08-19 23:46:26,151 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2025-08-19 23:46:26,151 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-mpnet-base-v2

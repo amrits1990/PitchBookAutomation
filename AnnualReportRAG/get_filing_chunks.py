@@ -6,10 +6,25 @@ from typing import Dict, List
 from datetime import datetime, timedelta
 from pathlib import Path
 from functools import wraps
-from secedgar import filings, FilingType
-from metadata_extractor import MetadataExtractor
-from content_processor import ContentProcessor
-from chunk_generator import ChunkGenerator
+
+# Try importing secedgar lazily so the module can be imported without it (for cached reads)
+try:
+    from secedgar import filings, FilingType  # type: ignore
+    _SECEDGAR_AVAILABLE = True
+except Exception:  # pragma: no cover
+    filings = None  # type: ignore
+    FilingType = None  # type: ignore
+    _SECEDGAR_AVAILABLE = False
+
+# Prefer package-relative imports, with fallback when run as a script
+try:
+    from .metadata_extractor import MetadataExtractor
+    from .content_processor import ContentProcessor
+    from .chunk_generator import ChunkGenerator
+except Exception:  # pragma: no cover
+    from metadata_extractor import MetadataExtractor  # type: ignore
+    from content_processor import ContentProcessor  # type: ignore
+    from chunk_generator import ChunkGenerator  # type: ignore
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -240,6 +255,10 @@ def process_multiple_companies_filings(
         AuditLogger.log_error(correlation_id, 'CONFIGURATION_ERROR', str(e))
         raise ValueError(f"Configuration error: {e}")
     
+    # If secedgar is not available, fail fast when trying to access SEC
+    if not _SECEDGAR_AVAILABLE:
+        raise ValueError("secedgar package is not installed; cannot download SEC filings. Install 'secedgar' or use cached data paths.")
+    
     # Check required environment variable
     if not config.sec_user_agent or config.sec_user_agent == 'user@example.com':
         AuditLogger.log_error(correlation_id, 'CONFIGURATION_ERROR', 'SEC_USER_AGENT not set')
@@ -392,6 +411,10 @@ def process_single_company(
     correlation_id: str
 ) -> Dict:
     """Process all filings for a single company"""
+    
+    # Guard against missing secedgar
+    if not _SECEDGAR_AVAILABLE:
+        raise ValueError("secedgar package is not installed; cannot download SEC filings.")
     
     # Get config for this function
     config = get_config()
@@ -608,23 +631,26 @@ if __name__ == "__main__":
     print(f"Years back: 2")
     
     # Call the API
-    results = get_filing_chunks_api(
-        tickers=tickers,
-        start_date=start_date,
-        years_back=1,
-        filing_types=['10-Q'],  # Start with just 10-K for testing
-        return_full_data=False  # Set to True to get full datasets
-    )
-    
-    print("\nAPI Response Summary:")
-    print(f"Status: {results['status']}")
-    if results['status'] == 'success':
-        print(f"Successful filings: {len(results['successful_filings'])}")
-        print(f"Failed filings: {len(results['failed_filings'])}")
+    if _SECEDGAR_AVAILABLE:
+        results = get_filing_chunks_api(
+            tickers=tickers,
+            start_date=start_date,
+            years_back=1,
+            filing_types=['10-Q'],  # Start with just 10-K for testing
+            return_full_data=False  # Set to True to get full datasets
+        )
         
-        for filing in results['successful_filings']:
-            print(f"  - {filing['ticker']} {filing['filing_type']} ({filing['fiscal_year']}) - {filing['chunk_count']} chunks")
+        print("\nAPI Response Summary:")
+        print(f"Status: {results['status']}")
+        if results['status'] == 'success':
+            print(f"Successful filings: {len(results['successful_filings'])}")
+            print(f"Failed filings: {len(results['failed_filings'])}")
+            
+            for filing in results['successful_filings']:
+                print(f"  - {filing['ticker']} {filing['filing_type']} ({filing['fiscal_year']}) - {filing['chunk_count']} chunks")
+        else:
+            print(f"Error: {results.get('message', 'Unknown error')}")
+            if 'error_code' in results:
+                print(f"Error Code: {results['error_code']}")
     else:
-        print(f"Error: {results.get('message', 'Unknown error')}")
-        if 'error_code' in results:
-            print(f"Error Code: {results['error_code']}")
+        print("secedgar not installed; skipping live API example.")
