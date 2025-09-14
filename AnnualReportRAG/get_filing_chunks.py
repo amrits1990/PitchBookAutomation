@@ -6,6 +6,7 @@ from typing import Dict, List
 from datetime import datetime, timedelta
 from pathlib import Path
 from functools import wraps
+import glob
 
 # Try importing secedgar lazily so the module can be imported without it (for cached reads)
 try:
@@ -58,6 +59,75 @@ class SECFilingCleanerChunker:
     def __init__(self):
         self.config = get_config()
     
+    @staticmethod
+    def cleanup_after_batch_processing(batch_results_file: str, base_dir: str, force_cleanup: bool = False) -> Dict:
+        """Safely cleanup debug artifacts after batch processing.
+        - Removes *_debug.json files from rag_ready_data
+        - Returns details and never raises
+        - Skips when there were no successful filings unless force_cleanup=True
+        """
+        summary = {
+            'cleanup_performed': False,
+            'removed_files': 0,
+            'errors': [],
+        }
+        try:
+            # Validate inputs
+            if not batch_results_file or not os.path.exists(batch_results_file):
+                summary['errors'].append('batch_results_file_missing')
+                return summary
+            with open(batch_results_file, 'r', encoding='utf-8') as f:
+                results = json.load(f)
+            total_processed = results.get('summary', {}).get('total_filings_processed', 0)
+            if total_processed == 0 and not force_cleanup:
+                summary['errors'].append('no_successful_filings')
+                summary['reason'] = 'no_successful_filings'
+                return summary
+            # Locate rag_ready_data
+            rag_dir = os.path.join(base_dir, 'rag_ready_data')
+            if not os.path.isdir(rag_dir):
+                summary['errors'].append('rag_dir_missing')
+                summary['reason'] = 'rag_dir_missing'
+                return summary
+            # Remove debug files
+            removed = 0
+            for path in glob.glob(os.path.join(rag_dir, '*_debug.json')):
+                try:
+                    os.remove(path)
+                    removed += 1
+                except Exception as e:
+                    summary['errors'].append(f'failed_remove:{os.path.basename(path)}')
+            summary['removed_files'] = removed
+            summary['cleanup_performed'] = removed > 0
+            if removed == 0:
+                summary['errors'].append('no_debug_files_found')
+                summary['reason'] = 'no_debug_files_found'
+            else:
+                summary['reason'] = f'removed_{removed}_debug_files'
+            return summary
+        except Exception as e:
+            summary['errors'].append('exception')
+            summary['reason'] = f'exception: {str(e)}'
+            return summary
+    
+    def _trim_cross_section_overlap(self, prev_text: str, next_text: str, min_overlap: int = 50, max_check: int = 600):
+        """Trim any overlapping text between the end of prev_text and the start of next_text.
+        Returns (trimmed_next_text, trimmed_chars). Only trims when overlap >= min_overlap.
+        """
+        if not prev_text or not next_text:
+            return next_text, 0
+        # Limit comparison window
+        prev_tail = prev_text[-max_check:]
+        next_head = next_text[:max_check]
+        max_k = min(len(prev_tail), len(next_head))
+        # Find longest overlap >= min_overlap
+        for k in range(max_k, min_overlap - 1, -1):
+            if prev_tail[-k:] == next_head[:k]:
+                # Trim the overlap from the beginning of next_text
+                trimmed = next_text[k:].lstrip()
+                return trimmed, k
+        return next_text, 0
+    
     def extract_metadata_from_header(self, file_path: str, content: str) -> Dict:
         """Extract metadata from SEC filing header"""
         metadata = metadata_extractor.extract_filing_metadata(file_path, content)
@@ -76,17 +146,21 @@ class SECFilingCleanerChunker:
             filing_metadata = self.extract_metadata_from_header(file_path, raw_content)
             section_patterns = content_processor.get_section_patterns(filing_metadata.get('form_type'))
             
+            # Preprocess once per filing (clean text, patterns)
+            pre = content_processor.preprocess_filing(file_path, filing_metadata)
+            
             all_chunks = []
             chunk_id_counter = 0
             
             print(f"Creating RAG dataset for: {filing_metadata.get('company_name', 'Unknown')} ({filing_metadata.get('ticker', 'N/A')})")
             
-            # Process each section individually
+            # Process each section individually using preprocessed content
             section_names = [item['name'] for item in section_patterns]
             
             for section_name in section_names:
                 try:
-                    section_data = content_processor.extract_section_content(file_path, section_name, filing_metadata)
+                    section_pattern = next((item['pattern'] for item in section_patterns if item['name'] == section_name), None)
+                    section_data = content_processor.extract_section_content_from_preprocessed(pre, section_name, section_pattern, filing_metadata)
                     
                     if section_data['metadata']['section_found'] and section_data['text']:
                         section_chunks = chunk_generator.create_rag_chunks(
@@ -95,23 +169,35 @@ class SECFilingCleanerChunker:
                             chunk_size=chunk_size,
                             overlap=overlap
                         )
+                        # Ensure no text overlap between sections: trim first chunk of this section
+                        if all_chunks and section_chunks:
+                            prev_last = all_chunks[-1]
+                            prev_section = prev_last['metadata'].get('section_name')
+                            curr_section = section_chunks[0]['metadata'].get('section_name', section_data['metadata'].get('section_name'))
+                            if prev_section and curr_section and prev_section != curr_section:
+                                trimmed_text, trimmed_chars = self._trim_cross_section_overlap(prev_last['text'], section_chunks[0]['text'])
+                                if trimmed_chars > 0:
+                                    section_chunks[0]['text'] = trimmed_text
+                                    section_chunks[0]['length'] = len(trimmed_text)
+                                    section_chunks[0]['metadata']['chunk_length'] = len(trimmed_text)
+                                    section_chunks[0]['metadata']['cross_section_trimmed'] = trimmed_chars
+                                    # Drop if too short after trimming
+                                    if section_chunks[0]['length'] < 20:
+                                        section_chunks.pop(0)
                         
-                        # Update chunk IDs
                         for chunk in section_chunks:
                             chunk['global_chunk_id'] = chunk_id_counter
                             chunk['metadata']['global_chunk_id'] = chunk_id_counter
                             chunk_id_counter += 1
-                        
                         all_chunks.extend(section_chunks)
                         print(f"  ✓ {section_name}: {len(section_chunks)} chunks")
-                    
                 except Exception as e:
                     print(f"  ✗ Failed processing {section_name}: {e}")
             
-            # Process unclassified content
+            # Process unclassified content using preprocessed content
             try:
                 print("Processing unclassified content...")
-                unclassified_data = content_processor.extract_unclassified_content(file_path, filing_metadata)
+                unclassified_data = content_processor.extract_unclassified_content_from_preprocessed(pre, filing_metadata)
                 
                 if unclassified_data['metadata']['section_found'] and unclassified_data['text']:
                     unclassified_chunks = chunk_generator.create_rag_chunks(
@@ -120,18 +206,28 @@ class SECFilingCleanerChunker:
                         chunk_size=chunk_size,
                         overlap=overlap
                     )
-                    
-                    # Update chunk IDs
+                    # Ensure no overlap between last section chunk and first unclassified chunk
+                    if all_chunks and unclassified_chunks:
+                        prev_last = all_chunks[-1]
+                        prev_section = prev_last['metadata'].get('section_name')
+                        curr_section = unclassified_chunks[0]['metadata'].get('section_name', unclassified_data['metadata'].get('section_name'))
+                        if prev_section and curr_section and prev_section != curr_section:
+                            trimmed_text, trimmed_chars = self._trim_cross_section_overlap(prev_last['text'], unclassified_chunks[0]['text'])
+                            if trimmed_chars > 0:
+                                unclassified_chunks[0]['text'] = trimmed_text
+                                unclassified_chunks[0]['length'] = len(trimmed_text)
+                                unclassified_chunks[0]['metadata']['chunk_length'] = len(trimmed_text)
+                                unclassified_chunks[0]['metadata']['cross_section_trimmed'] = trimmed_chars
+                                if unclassified_chunks[0]['length'] < 20:
+                                    unclassified_chunks.pop(0)
                     for chunk in unclassified_chunks:
                         chunk['global_chunk_id'] = chunk_id_counter
                         chunk['metadata']['global_chunk_id'] = chunk_id_counter
                         chunk_id_counter += 1
-                    
                     all_chunks.extend(unclassified_chunks)
                     print(f"  ✓ Unclassified Content: {len(unclassified_chunks)} chunks")
                 else:
                     print("  ℹ No unclassified content found")
-                    
             except Exception as e:
                 print(f"  ✗ Failed processing unclassified content: {e}")
             
@@ -208,7 +304,7 @@ def process_multiple_companies_filings(
     chunk_size: int = 1000,
     overlap: int = 150,
     output_base_dir: str = None,
-    cleanup_after_processing: bool = False,
+    cleanup_after_processing: bool = True,
     correlation_id: str = None  # Add correlation ID parameter
 ) -> Dict:
     """
@@ -360,6 +456,7 @@ def process_multiple_companies_filings(
     
     # Save overall results in AnnualReportRAG folder
     script_dir = os.path.dirname(os.path.abspath(__file__))
+
     batch_results_file = os.path.join(script_dir, 'batch_processing_results.json')
     with open(batch_results_file, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, default=str, ensure_ascii=False)
@@ -490,6 +587,12 @@ def process_single_company(
                         'processed_at': datetime.now().isoformat()
                     }
                     
+                    ##Save the RAG dataset to a file
+                    rag_file_name = f"{ticker}_{filing_type}_{rag_dataset['filing_metadata'].get('fiscal_year', 'unknown')}_{rag_dataset['filing_metadata'].get('filing_date', 'unknown')}.json"
+                    rag_file_path = os.path.join(rag_dir, rag_file_name)
+                    with open(rag_file_path, 'w', encoding='utf-8') as rag_file:
+                        json.dump(rag_dataset, rag_file, indent=2, ensure_ascii=False, default=str)
+
                     company_results['success'].append(filing_result)
                     print(f"    ✓ Successfully processed {os.path.basename(file_path)}")
                     
@@ -623,7 +726,7 @@ def get_filing_chunks_api(
 if __name__ == "__main__":
     # Example call
     tickers = ['WERN']  # Add more tickers as needed
-    start_date = '2025-07-01'
+    start_date = '2024-01-01'
     
     print("Example API call:")
     print(f"Processing tickers: {tickers}")
@@ -636,7 +739,7 @@ if __name__ == "__main__":
             tickers=tickers,
             start_date=start_date,
             years_back=1,
-            filing_types=['10-Q'],  # Start with just 10-K for testing
+            filing_types=['10-K','10-Q'],  # Start with just 10-K for testing
             return_full_data=False  # Set to True to get full datasets
         )
         

@@ -30,8 +30,42 @@ class AgentConfig:
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     
+    # LLM Settings
+    openrouter_api_key: Optional[str] = None
+    openrouter_model: str = "openai/gpt-4o-mini"
+    openai_api_key: Optional[str] = None
+    
     # Logging
     log_level: str = "INFO"
+    
+    def __post_init__(self):
+        """Initialize LLM client after dataclass creation"""
+        self._llm_client = None
+        self._setup_llm_client()
+    
+    def _setup_llm_client(self):
+        """Setup LLM client based on available API keys"""
+        try:
+            if self.openrouter_api_key:
+                # Use OpenRouter
+                import openai
+                self._llm_client = openai.OpenAI(
+                    api_key=self.openrouter_api_key,
+                    base_url="https://openrouter.ai/api/v1"
+                )
+            elif self.openai_api_key:
+                # Use OpenAI directly
+                import openai
+                self._llm_client = openai.OpenAI(api_key=self.openai_api_key)
+            else:
+                self._llm_client = None
+        except ImportError:
+            self._llm_client = None
+    
+    @property
+    def llm_client(self):
+        """Get the LLM client"""
+        return self._llm_client
     
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -44,6 +78,9 @@ class AgentConfig:
             semantic_weight=float(os.getenv("SEMANTIC_WEIGHT", "0.7")),
             api_host=os.getenv("API_HOST", "0.0.0.0"),
             api_port=int(os.getenv("API_PORT", "8000")),
+            openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openrouter_model=os.getenv("OPENROUTER_REFINEMENT_MODEL", "openai/gpt-4o-mini"),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
         )
     

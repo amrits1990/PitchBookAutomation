@@ -7,7 +7,10 @@ import re
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
-from .data_source_interface import TranscriptData
+try:
+    from .data_source_interface import TranscriptData
+except ImportError:
+    from data_source_interface import TranscriptData
 
 
 class TranscriptContentProcessor:
@@ -258,7 +261,9 @@ class TranscriptContentProcessor:
     
     def _identify_sections(self, segments: List[Dict[str, str]]) -> List[Dict[str, any]]:
         """
-        Identify logical sections within the transcript
+        Identify sections using simple analyst-based logic:
+        - Everything before first analyst = Opening Remarks  
+        - Everything after first analyst = Q&A Session
         
         Args:
             segments: List of speaker segments
@@ -266,51 +271,45 @@ class TranscriptContentProcessor:
         Returns:
             List of section dictionaries
         """
-        sections = []
-        current_section = None
-        current_segments = []
+        if not segments:
+            return []
         
+        # Find the first analyst segment
+        first_analyst_index = None
         for i, segment in enumerate(segments):
-            content = segment['content']
-            
-            # Check if this segment starts a new section
-            section_header = self._detect_section_header(content)
-            
-            if section_header:
-                # Save previous section
-                if current_section and current_segments:
-                    sections.append({
-                        'title': current_section,
-                        'segments': current_segments.copy(),
-                        'start_index': len(sections),
-                        'segment_count': len(current_segments)
-                    })
-                
-                # Start new section
-                current_section = section_header
-                current_segments = [segment]
-            else:
-                # Add to current section
-                if current_section is None:
-                    current_section = "Opening Remarks"
-                current_segments.append(segment)
+            title = segment.get('title', '').lower()
+            if 'analyst' in title:
+                first_analyst_index = i
+                break
         
-        # Add final section
-        if current_section and current_segments:
-            sections.append({
-                'title': current_section,
-                'segments': current_segments.copy(),
-                'start_index': len(sections),
-                'segment_count': len(current_segments)
-            })
+        sections = []
         
-        # If no sections identified, create a default section
-        if not sections and segments:
+        if first_analyst_index is None:
+            # No analyst found - everything is opening remarks
             sections.append({
-                'title': "Full Transcript",
+                'title': 'Opening Remarks',
                 'segments': segments,
                 'start_index': 0,
                 'segment_count': len(segments)
+            })
+        else:
+            # Split into opening remarks and Q&A
+            if first_analyst_index > 0:
+                opening_segments = segments[:first_analyst_index]
+                sections.append({
+                    'title': 'Opening Remarks',
+                    'segments': opening_segments,
+                    'start_index': 0,
+                    'segment_count': len(opening_segments)
+                })
+            
+            # Q&A section starts from first analyst
+            qa_segments = segments[first_analyst_index:]
+            sections.append({
+                'title': 'Q&A Session',
+                'segments': qa_segments,
+                'start_index': len(sections),
+                'segment_count': len(qa_segments)
             })
         
         return sections

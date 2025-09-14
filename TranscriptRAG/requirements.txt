@@ -28,6 +28,10 @@ pydub>=0.25.0         # Optional: Audio file manipulation
 textstat>=0.7.0       # Text readability statistics
 spacy>=3.4.0          # Advanced NLP
 
+# Vector database and search
+lancedb>=0.13.0       # Vector database for embeddings
+rank-bm25>=0.2.2      # BM25 keyword search
+
 # Optional: For enhanced processing
 transformers>=4.21.0  # For advanced NLP models
 sentence-transformers>=2.2.0  # For embeddings

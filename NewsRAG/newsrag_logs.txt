@@ -256,3 +256,15 @@
 2025-08-19 23:46:26,134 - AgentSystem.vector_store.lance_store - INFO - Loading embedding model: all-mpnet-base-v2
 2025-08-19 23:46:26,151 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
 2025-08-19 23:46:26,151 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-mpnet-base-v2
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>, <NewsCategory.BUSINESS: 'business'>], days_back=30, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=10, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>, <NewsCategory.BUSINESS: 'business'>], days_back=30, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=10, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>, <NewsCategory.BUSINESS: 'business'>], days_back=30, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=10, include_similar=True)

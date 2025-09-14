@@ -1,44 +1,56 @@
 """
-TranscriptRAG - Transcript Processing and Chunking System
-Independent system for processing earnings call transcripts and creating RAG-ready chunks
+TranscriptRAG - Production-Ready Transcript Processing for Agentic Frameworks
+
+A clean, efficient system for processing earnings call transcripts optimized for AI agents.
+Provides standardized interfaces, proper error handling, and intelligent quarter selection.
+
+Key Features:
+- Agent-ready interfaces with standardized responses
+- Quarter selection with year context (Q1 2024, Q3 2025)
+- Hybrid vector + keyword search with accurate scoring
+- Comprehensive input validation and error handling
+- LanceDB vector database integration
 """
 
+# Core processing function
 from .get_transcript_chunks import get_transcript_chunks
+
+# Data source interfaces  
 from .data_source_interface import TranscriptData, TranscriptQuery, transcript_registry
 from .alpha_vantage_source import register_alpha_vantage_source
+
+# Configuration and validation
 from .transcript_config import get_transcript_config, validate_transcript_environment
+
+# Primary agent interfaces (RECOMMENDED FOR AGENTS)
 from .agent_interface import (
-    get_transcript_insights_for_agent,
-    get_earnings_call_summary,
+    index_transcripts_for_agent,
+    search_transcripts_for_agent, 
+    get_available_quarters_for_agent,
+    evaluate_transcript_search_results_with_llm,
 )
 
-# Import vector-enhanced interfaces as primary interfaces
-try:
-    from .vector_enhanced_interface import (
-        index_transcripts_for_agent_vector as index_transcripts_for_agent,
-        search_transcripts_for_agent_vector as search_transcripts_for_agent,
-    )
-except ImportError:
-    # Fallback to original interfaces if vector enhancement unavailable
-    from .agent_interface import (
-        index_transcripts_for_agent,
-        search_transcripts_for_agent,
-    )
-
-__version__ = "1.0.0"
+__version__ = "2.0.0"  # Major version bump for agent-ready improvements
 __author__ = "AI Assistant"
 
-# Main API function
+# Agent-Ready API (Primary Interface)
 __all__ = [
-    'get_transcript_chunks',
-    'get_transcript_insights_for_agent',  # Agent-friendly interface
-    'get_earnings_call_summary',          # Earnings call summary
+    # === AGENT INTERFACES (RECOMMENDED) ===
+    'index_transcripts_for_agent',          # Index transcripts with vector DB
+    'search_transcripts_for_agent',         # Search with quarter selection & proper scoring
+    'get_available_quarters_for_agent',     # Get available quarters for intelligent selection
+    'evaluate_transcript_search_results_with_llm',  # LLM-powered result evaluation
+    
+    # === CORE PROCESSING ===
+    'get_transcript_chunks',                # Direct chunk processing
+    
+    # === DATA SOURCES ===
     'TranscriptData',
     'TranscriptQuery', 
     'transcript_registry',
     'register_alpha_vantage_source',
+    
+    # === CONFIGURATION ===
     'get_transcript_config',
     'validate_transcript_environment',
-    'index_transcripts_for_agent',
-    'search_transcripts_for_agent',
 ]

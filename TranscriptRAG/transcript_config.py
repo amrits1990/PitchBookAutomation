@@ -19,7 +19,7 @@ class TranscriptProcessingConfig:
     
     # Processing Limits
     max_workers: int = field(default_factory=lambda: int(os.getenv('MAX_WORKERS', '4')))
-    max_years_back: int = field(default_factory=lambda: int(os.getenv('MAX_YEARS_BACK', '5')))
+    max_quarters_back: int = field(default_factory=lambda: int(os.getenv('MAX_QUARTERS_BACK', '20')))
     max_tickers_per_request: int = field(default_factory=lambda: int(os.getenv('MAX_TICKERS_PER_REQUEST', '10')))
     max_transcripts_per_ticker: int = field(default_factory=lambda: int(os.getenv('MAX_TRANSCRIPTS_PER_TICKER', '50')))
     
@@ -40,6 +40,9 @@ class TranscriptProcessingConfig:
     min_content_length: int = field(default_factory=lambda: int(os.getenv('MIN_CONTENT_LENGTH', '50')))
     max_content_length: int = field(default_factory=lambda: int(os.getenv('MAX_CONTENT_LENGTH', '1000000')))
     
+    # Simple Quarter Tracking Configuration
+    ingestion_tracking_dir: str = field(default_factory=lambda: os.getenv('INGESTION_TRACKING_DIR', os.path.join(os.path.dirname(__file__), 'ingestion_tracking')))
+    
     # Logging Configuration
     log_level: str = field(default_factory=lambda: os.getenv('LOG_LEVEL', 'INFO'))
     log_file: Optional[str] = field(default_factory=lambda: os.getenv('LOG_FILE'))
@@ -57,11 +60,12 @@ class TranscriptProcessingConfig:
         
         if len(self.alpha_vantage_api_key) < 10:
             raise ValueError("ALPHA_VANTAGE_API_KEY appears to be invalid (too short)")
+        
     
     def _validate_limits(self):
         """Validate configuration limits"""
-        if not (1 <= self.max_years_back <= 10):
-            raise ValueError("MAX_YEARS_BACK must be between 1 and 10")
+        if not (1 <= self.max_quarters_back <= 40):
+            raise ValueError("MAX_QUARTERS_BACK must be between 1 and 40")
         
         if not (1 <= self.max_workers <= 20):
             raise ValueError("MAX_WORKERS must be between 1 and 20")
@@ -84,7 +88,7 @@ class TranscriptProcessingConfig:
             'alpha_vantage_api_key': '***REDACTED***',  # Don't expose API key
             'request_timeout': self.request_timeout,
             'max_workers': self.max_workers,
-            'max_years_back': self.max_years_back,
+            'max_quarters_back': self.max_quarters_back,
             'max_tickers_per_request': self.max_tickers_per_request,
             'max_transcripts_per_ticker': self.max_transcripts_per_ticker,
             'default_chunk_size': self.default_chunk_size,
@@ -98,6 +102,7 @@ class TranscriptProcessingConfig:
             'enable_speaker_chunking': self.enable_speaker_chunking,
             'min_content_length': self.min_content_length,
             'max_content_length': self.max_content_length,
+            'ingestion_tracking_dir': self.ingestion_tracking_dir,
             'log_level': self.log_level,
             'log_file': self.log_file,
             'environment': self.environment
@@ -157,7 +162,7 @@ class TranscriptConfigManager(TranscriptConfigurationProvider):
         """Reload configuration from environment"""
         self._load_config()
     
-    def validate_processing_params(self, chunk_size: int, overlap: int, years_back: int) -> bool:
+    def validate_processing_params(self, chunk_size: int, overlap: int, quarters_back: int) -> bool:
         """Validate processing parameters against configuration limits"""
         config = self.get_typed_config()
         
@@ -170,7 +175,7 @@ class TranscriptConfigManager(TranscriptConfigurationProvider):
         if overlap >= chunk_size:
             return False
         
-        if not (1 <= years_back <= config.max_years_back):
+        if not (1 <= quarters_back <= config.max_quarters_back):
             return False
         
         return True
@@ -242,6 +247,6 @@ def validate_transcript_environment() -> Dict[str, Any]:
             'optional_variables': [
                 'LOG_LEVEL', 'ENVIRONMENT', 'MAX_WORKERS', 
                 'DEFAULT_CHUNK_SIZE', 'DEFAULT_OVERLAP',
-                'ALPHA_VANTAGE_RATE_LIMIT', 'MAX_YEARS_BACK'
+                'ALPHA_VANTAGE_RATE_LIMIT', 'MAX_QUARTERS_BACK'
             ]
         }

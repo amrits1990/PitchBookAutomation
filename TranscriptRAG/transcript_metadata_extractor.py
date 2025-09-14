@@ -8,7 +8,10 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
-from .data_source_interface import TranscriptData
+try:
+    from .data_source_interface import TranscriptData
+except ImportError:
+    from data_source_interface import TranscriptData
 
 
 @dataclass
@@ -29,6 +32,14 @@ class EnrichedTranscriptMetadata:
     word_count: int
     participant_count: int
     participants: List[str]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with JSON-serializable values"""
+        data = asdict(self)
+        # Convert datetime to ISO string
+        if isinstance(data.get('transcript_date'), datetime):
+            data['transcript_date'] = data['transcript_date'].isoformat()
+        return data
     
     # Financial metrics (if available)
     eps_reported: Optional[float] = None

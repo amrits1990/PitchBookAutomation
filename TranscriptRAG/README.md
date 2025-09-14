@@ -1,229 +1,273 @@
-# TranscriptRAG - Earnings Call Transcript Processing System
+# TranscriptRAG - Production-Ready Transcript Processing for AI Agents
 
-An independent system for processing earnings call transcripts and creating RAG-ready chunks, designed to work alongside the AnnualReportRAG system.
+A clean, efficient system for processing earnings call transcripts optimized for AI agents and LLM frameworks.
 
-## Features
+## 🤖 **Agent-Ready Features**
 
-- 🔌 **Pluggable Data Sources**: Abstract interface supporting multiple transcript providers
-- 📊 **Alpha Vantage Integration**: Built-in support for Alpha Vantage earnings data API
-- 📝 **Section-Aware Processing**: Intelligent parsing of transcript sections (Opening Remarks, Q&A, etc.)
-- 🗣️ **Speaker-Aware Chunking**: Optional chunking that respects speaker boundaries
-- 📈 **Rich Metadata Extraction**: Comprehensive metadata including financial metrics and sentiment
-- ⚙️ **Configurable Processing**: Environment-based configuration with validation
-- 🔍 **RAG-Optimized Output**: Chunks optimized for retrieval and question-answering
+- **Standardized Responses**: Consistent error codes, metadata, and request tracking
+- **Intelligent Quarter Selection**: See "Q1 2024", "Q3 2025" format with years
+- **Accurate Scoring**: Fixed hybrid search showing proper relevance scores (no more 0.000)
+- **Input Validation**: Comprehensive validation with helpful error messages
+- **Vector Database**: LanceDB integration with transcript-specific metadata
+- **Flexible Search**: Vector similarity + keyword search with quarter filtering
 
-## Quick Start
+## 🚀 **Quick Start for Agents**
 
-### 1. Environment Setup
-
+### Required Setup
 ```bash
-# Required: Alpha Vantage API Key
+# Set environment variable
 export ALPHA_VANTAGE_API_KEY="your_api_key_here"
 
-# Optional: Configuration
-export DEFAULT_CHUNK_SIZE="800"
-export DEFAULT_OVERLAP="150"
-export ENABLE_SPEAKER_CHUNKING="true"
+# Install dependencies  
+pip install lancedb>=0.13.0 rank-bm25>=0.2.2 sentence-transformers
 ```
 
-### 2. Basic Usage
+### Agent Interface Usage
 
 ```python
-from TranscriptRAG import get_transcript_chunks
-
-# Process transcripts for multiple companies
-results = get_transcript_chunks(
-    tickers=['AAPL', 'MSFT', 'GOOGL'],
-    start_date='2024-01-01',
-    years_back=2,
-    chunk_size=800,
-    overlap=150,
-    return_full_data=True
+from TranscriptRAG import (
+    index_transcripts_for_agent,
+    search_transcripts_for_agent, 
+    get_available_quarters_for_agent
 )
 
-if results['status'] == 'success':
-    for transcript in results['successful_transcripts']:
-        print(f"{transcript['ticker']} {transcript['quarter']} - {transcript['chunk_count']} chunks")
+# 1. Index transcripts for a company
+result = index_transcripts_for_agent(
+    ticker="AAPL",
+    quarters_back=4  # Last 4 quarters
+)
+
+if result["success"]:
+    print(f"Indexed {result['data']['chunk_count']} chunks")
+
+# 2. Get available quarters (intelligent selection)
+quarters_info = get_available_quarters_for_agent("AAPL")
+if quarters_info["success"]:
+    available = quarters_info["data"]["available_quarters"]
+    print(f"Available: {available}")  # ['Q1 2024', 'Q4 2023', 'Q3 2023']
+
+# 3. Search with specific quarters (RECOMMENDED)
+search_result = search_transcripts_for_agent(
+    ticker="AAPL",
+    query="latest guidance and outlook",
+    quarters=["Q1 2024", "Q4 2023"],  # Specific quarters with years
+    k=10,
+    search_method="vector_hybrid"
+)
+
+if search_result["success"]:
+    for chunk in search_result["data"]["results"]:
+        score = chunk["relevance_score"]  # Proper scoring (not 0.000)
+        quarter = chunk["metadata"]["quarter"] 
+        content = chunk["content"][:100]
+        print(f"Score: {score:.3f} | {quarter} | {content}...")
 ```
 
-## Architecture
+## 📚 **Agent Interface Reference**
 
-### Core Components
+### `get_available_quarters_for_agent(ticker)`
+Returns available quarters for intelligent selection.
 
-1. **Data Source Interface** (`data_source_interface.py`)
-   - Abstract interface for transcript providers
-   - Standardized data structures
-   - Registry for multiple sources
-
-2. **Alpha Vantage Source** (`alpha_vantage_source.py`)
-   - Alpha Vantage API integration
-   - Rate limiting and error handling
-   - Earnings data transformation
-
-3. **Content Processor** (`transcript_content_processor.py`)
-   - Transcript cleaning and parsing
-   - Speaker identification
-   - Section detection (Opening Remarks, Q&A, etc.)
-
-4. **Metadata Extractor** (`transcript_metadata_extractor.py`)
-   - Financial metrics extraction
-   - Sentiment analysis
-   - Topic identification
-
-5. **Chunk Generator** (`transcript_chunk_generator.py`)
-   - Standard text chunking
-   - Speaker-aware chunking for Q&A sections
-   - Overlap handling
-
-6. **Configuration** (`transcript_config.py`)
-   - Environment-based configuration
-   - Parameter validation
-   - Rate limiting settings
-
-## API Reference
-
-### `get_transcript_chunks()`
-
-Main API function that mirrors the interface of `get_filing_chunks()` from AnnualReportRAG.
-
-```python
-def get_transcript_chunks(
-    tickers: List[str],                    # Company ticker symbols
-    start_date: str,                       # Start date (YYYY-MM-DD)
-    years_back: int = 3,                   # Years to look back
-    chunk_size: int = 800,                 # Chunk size (100-2000)
-    overlap: int = 150,                    # Overlap between chunks
-    limit_per_ticker: Optional[int] = None, # Max transcripts per ticker
-    use_speaker_chunking: bool = None,     # Enable speaker-aware chunking
-    return_full_data: bool = False,        # Include full datasets
-    output_dir: str = None,                # Save results directory
-    correlation_id: str = None             # Request tracking ID
-) -> Dict
-```
-
-### Response Structure
-
+**Response:**
 ```json
 {
-    "status": "success",
-    "correlation_id": "uuid-string",
-    "summary": {
-        "total_tickers": 3,
-        "total_transcripts_processed": 12,
-        "total_transcripts_failed": 0,
-        "processing_start_time": "2024-07-26T10:00:00",
-        "processing_end_time": "2024-07-26T10:05:00"
-    },
-    "successful_transcripts": [
-        {
-            "ticker": "AAPL",
-            "transcript_date": "2024-01-25",
-            "quarter": "Q1",
-            "fiscal_year": "2024",
-            "transcript_type": "earnings_call",
-            "chunk_count": 42,
-            "processed_at": "2024-07-26T10:01:00"
-        }
-    ],
-    "failed_transcripts": []
-}
-```
-
-### Chunk Structure
-
-Each chunk contains:
-
-```json
-{
-    "chunk_id": 0,
-    "global_chunk_id": 0,
-    "text": "Management Remarks: We had a strong quarter...",
-    "length": 756,
-    "metadata": {
-        "ticker": "AAPL",
-        "company_name": "Apple Inc.",
-        "quarter": "Q1",
-        "fiscal_year": "2024",
-        "section_name": "Management Remarks",
-        "content_type": "transcript",
-        "transcript_date": "2024-01-25T00:00:00",
-        "chunk_length": 756,
-        "speakers": ["CEO", "CFO"],
-        "financial_metrics": {
-            "eps_reported": 2.18,
-            "eps_estimated": 2.10,
-            "eps_surprise": 0.08
-        }
+  "success": true,
+  "data": {
+    "ticker": "AAPL",
+    "total_documents": 244,
+    "available_quarters": ["Q1 2024", "Q4 2023", "Q3 2023", "Q2 2023"],
+    "agent_recommendations": {
+      "suggested_quarters_recent": ["Q1 2024", "Q4 2023", "Q3 2023"],
+      "search_tips": ["Use specific quarters for focused results"]
     }
+  }
 }
 ```
 
-## Configuration Options
+### `search_transcripts_for_agent(ticker, query, quarters=None, k=20)`
+Search with intelligent quarter selection and proper scoring.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ALPHA_VANTAGE_API_KEY` | **Required** | Alpha Vantage API key |
-| `DEFAULT_CHUNK_SIZE` | `800` | Default chunk size |
-| `DEFAULT_OVERLAP` | `150` | Default overlap between chunks |
-| `MAX_TICKERS_PER_REQUEST` | `10` | Maximum tickers per API call |
-| `MAX_TRANSCRIPTS_PER_TICKER` | `50` | Maximum transcripts per ticker |
-| `ENABLE_SPEAKER_CHUNKING` | `true` | Enable speaker-aware chunking |
-| `ALPHA_VANTAGE_RATE_LIMIT` | `5` | API calls per minute |
-| `ALPHA_VANTAGE_DELAY` | `12` | Seconds between API calls |
+**Parameters:**
+- `ticker` (str): Company ticker (e.g., "AAPL")
+- `query` (str): Search query
+- `quarters` (list): Specific quarters like ["Q1 2024", "Q2 2024"] (RECOMMENDED)
+- `quarters_back` (int): Legacy parameter (use quarters instead)
+- `k` (int): Number of results (1-100)
+- `search_method` (str): "vector_hybrid", "vector_semantic", "keyword"
 
-## Data Sources
-
-### Alpha Vantage
-
-- **Data Type**: Earnings summaries with financial metrics
-- **Coverage**: ~10 years of historical data
-- **Rate Limits**: 5 calls/minute (free tier), 500 calls/day
-- **Note**: Provides earnings data, not actual transcript text
-
-### Adding New Data Sources
-
-Implement the `TranscriptDataSource` interface:
-
-```python
-from data_source_interface import TranscriptDataSource, TranscriptData, TranscriptQuery
-
-class CustomTranscriptSource(TranscriptDataSource):
-    def get_transcripts(self, query: TranscriptQuery) -> List[TranscriptData]:
-        # Implementation here
-        pass
-    
-    def get_latest_transcript(self, ticker: str) -> Optional[TranscriptData]:
-        # Implementation here
-        pass
-    
-    # ... other required methods
-
-# Register with the system
-from data_source_interface import transcript_registry
-transcript_registry.register_source('custom', CustomTranscriptSource())
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      {
+        "content": "Management discussed strong revenue growth...",
+        "metadata": {"quarter": "Q1 2024", "speaker": "CEO"},
+        "relevance_score": 0.847,  // Proper scoring
+        "chunk_id": "aapl_123"
+      }
+    ],
+    "returned": 10,
+    "search_method": "vector_hybrid",
+    "quarters_searched": ["Q1 2024", "Q4 2023"],
+    "available_quarters_info": {
+      "available_quarters": ["Q1 2024", "Q4 2023", "Q3 2023"]
+    }
+  }
+}
 ```
 
-## Error Handling
+### `index_transcripts_for_agent(ticker, quarters_back=4)`
+Index transcripts into vector database.
 
-The system provides comprehensive error handling:
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "ticker": "AAPL",
+    "chunk_count": 244,
+    "transcripts_used": [
+      {
+        "quarter": "Q1 2024",
+        "fiscal_year": "2024", 
+        "chunk_count": 58
+      }
+    ],
+    "vector_storage": {
+      "success": true,
+      "table_name": "transcripts_aapl"
+    }
+  }
+}
+```
 
-- **Validation Errors**: Invalid parameters, missing API keys
-- **Network Errors**: API timeouts, connection issues
-- **Rate Limiting**: Automatic delays, retry logic
-- **Data Errors**: Malformed responses, missing data
+## 🎯 **Agent Best Practices**
 
-All errors include correlation IDs for tracking and debugging.
+### 1. Always Check Available Quarters First
+```python
+# ✅ GOOD: Check what's available
+quarters_info = get_available_quarters_for_agent("AAPL")
+available = quarters_info["data"]["available_quarters"]
 
-## Comparison with AnnualReportRAG
+# Use specific quarters
+search_result = search_transcripts_for_agent(
+    ticker="AAPL", 
+    query="guidance",
+    quarters=available[:2]  # Most recent 2 quarters
+)
+```
 
-| Feature | AnnualReportRAG | TranscriptRAG |
-|---------|-----------------|---------------|
-| **Data Source** | SEC EDGAR filings | Alpha Vantage earnings data |
-| **Content Type** | Form 10-K/10-Q sections | Earnings call summaries |
-| **Sectioning** | SEC filing sections | Transcript sections (Remarks, Q&A) |
-| **Special Features** | Financial table extraction | Speaker-aware chunking |
-| **Use Case** | Regulatory document analysis | Earnings call analysis |
+### 2. Handle Errors Gracefully
+```python
+result = search_transcripts_for_agent("INVALID", "test")
+if not result["success"]:
+    error = result["error"]
+    print(f"Error [{error['code']}]: {error['message']}")
+    # Handle specific error codes: INVALID_INPUT, NOT_FOUND, etc.
+```
 
-## License
+### 3. Use Proper Scoring
+```python
+results = search_result["data"]["results"]
+for chunk in results:
+    score = chunk["relevance_score"]  # Always > 0 now
+    if score > 0.7:
+        print("High relevance chunk")
+    elif score > 0.4:
+        print("Medium relevance chunk")
+```
 
-Part of the Capstone project for Gen AI Engineering Fellowship.
+## 🧪 **Interactive Examples**
+
+Test the interface with examples:
+
+```bash
+cd TranscriptRAG/examples/
+
+# Interactive transcript ingestion
+python ingest_transcripts.py
+
+# Interactive search with quarter selection
+python search_transcripts.py
+```
+
+## 📁 **Project Structure**
+
+```
+TranscriptRAG/
+├── __init__.py                    # Agent-ready API exports
+├── agent_interface.py             # Primary agent interface
+├── transcript_vector_store.py     # LanceDB vector database
+├── get_transcript_chunks.py       # Core processing
+├── examples/
+│   ├── ingest_transcripts.py      # Example: indexing
+│   └── search_transcripts.py      # Example: searching
+└── README.md                      # This file
+```
+
+## ⚙️ **Configuration**
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `ALPHA_VANTAGE_API_KEY` | **Required** | Alpha Vantage API key |
+| `TRANSCRIPT_RAG_CHUNK_SIZE` | `800` | Chunk size for processing |
+| `TRANSCRIPT_RAG_CHUNK_OVERLAP` | `150` | Overlap between chunks |
+
+## 🔧 **Advanced Features**
+
+### Search Filtering
+```python
+search_result = search_transcripts_for_agent(
+    ticker="AAPL",
+    query="iPhone sales",
+    quarters=["Q1 2024"],
+    k=10,
+    filters={
+        "section_name": "Q&A Session",  # Specific sections
+        "speaker": "CEO"                # Specific speakers
+    }
+)
+```
+
+### Multiple Search Methods
+```python
+# Hybrid search (recommended) - combines semantic + keyword
+search_transcripts_for_agent(..., search_method="vector_hybrid")
+
+# Pure semantic search - meaning-based
+search_transcripts_for_agent(..., search_method="vector_semantic") 
+
+# Keyword search - exact term matching
+search_transcripts_for_agent(..., search_method="keyword")
+```
+
+## 📊 **Error Codes**
+
+| Code | Description | Solution |
+|------|-------------|----------|
+| `INVALID_INPUT` | Invalid parameters | Check ticker format, query length |
+| `NOT_FOUND` | No data for ticker | Run `index_transcripts_for_agent()` first |
+| `API_ERROR` | External API failure | Check API key, network connection |
+| `VECTOR_DB_ERROR` | Database error | Check dependencies, disk space |
+
+## 🚀 **Production Readiness**
+
+✅ **Agent-Ready Features:**
+- Standardized error codes and responses
+- Comprehensive input validation  
+- Request tracking with correlation IDs
+- Proper relevance scoring (no more 0.000)
+- Intelligent quarter selection with years
+- Backwards compatibility maintained
+
+✅ **Performance Optimized:**
+- Vector database caching
+- Efficient hybrid search
+- Minimal dependencies
+- Clean codebase without test artifacts
+
+---
+
+**Version 2.0.0** - Production-ready for agentic frameworks 🤖

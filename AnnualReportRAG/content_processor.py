@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from typing import Dict, List, Optional, Tuple
 import concurrent.futures
 from datetime import datetime
+import unicodedata
 
 
 class ContentProcessor:
@@ -19,42 +20,52 @@ class ContentProcessor:
     def __init__(self):
         self.section_patterns = {
             'k10': [
-                {"pattern": "ITEM 1. BUSINESS", "name": "Business", "number": "1"},
+            {"pattern": "ITEM 1. BUSINESS", "name": "Business", "number": "1"},
             {"pattern": "ITEM 1A. RISK FACTORS", "name": "Risk Factors", "number": "1a"},
-            {"pattern": "ITEM 1B. UNRESOLVED STAFF COMMENTS", "name": "Unresolved Staff Comments", "number": "1b"},
-            {"pattern": "ITEM 1C. CYBERSECURITY", "name": "Cybersecurity", "number": "1c"},
             {"pattern": "ITEM 2. PROPERTIES", "name": "Properties", "number": "2"},
             {"pattern": "ITEM 3. LEGAL PROCEEDINGS", "name": "Legal Proceedings", "number": "3"},
             {"pattern": "ITEM 4. MINE SAFETY DISCLOSURES", "name": "Mine Safety Disclosures", "number": "4"},
             {"pattern": "ITEM 5. MARKET FOR REGISTRANT'S COMMON EQUITY", "name": "Market for Registrant's Common Equity, Related Stockholder Matters and Issuer Purchases of Equity Securities", "number": "5"},
-            {"pattern": "ITEM 6. RESERVED", "name": "Reserved", "number": "6"},
             {"pattern": "ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS", "name": "Management's Discussion and Analysis of Financial Condition and Results of Operations", "number": "7"},
             {"pattern": "ITEM 7A. QUANTITATIVE AND QUALITATIVE DISCLOSURES", "name": "Market Risk", "number": "7a"},
             {"pattern": "ITEM 8. FINANCIAL STATEMENTS AND SUPPLEMENTARY DATA", "name": "Financial Statements and Supplementary Data", "number": "8"},
-            {"pattern": "ITEM 9. CHANGES IN AND DISAGREEMENTS", "name": "Changes in and Disagreements with Accountants on Accounting and Financial Disclosure", "number": "9"},
-            {"pattern": "ITEM 9A. CONTROLS AND PROCEDURES", "name": "Controls and Procedures", "number": "9a"},
             {"pattern": "ITEM 9B. OTHER INFORMATION", "name": "Other Information", "number": "9b"},
-            {"pattern": "ITEM 9C. DISCLOSURE REGARDING FOREIGN JURISDICTIONS", "name": "Disclosure Regarding Foreign Jurisdictions that Prevent Inspections", "number": "9c"},
             {"pattern": "ITEM 10. DIRECTORS, EXECUTIVE OFFICERS", "name": "Directors, Executive Officers and Corporate Governance", "number": "10"},
-            {"pattern": "ITEM 11. EXECUTIVE COMPENSATION", "name": "Executive Compensation", "number": "11"},
-            {"pattern": "ITEM 12. SECURITY OWNERSHIP", "name": "Security Ownership of Certain Beneficial Owners and Management and Related Stockholder Matters", "number": "12"},
-            {"pattern": "ITEM 13. CERTAIN RELATIONSHIPS", "name": "Certain Relationships and Related Transactions, and Director Independence", "number": "13"},
-            {"pattern": "ITEM 14. PRINCIPAL ACCOUNTANT FEES", "name": "Principal Accountant Fees and Services", "number": "14"},
-            {"pattern": "ITEM 15. EXHIBIT AND FINANCIAL STATEMENT", "name": "Exhibit and Financial Statement Schedules", "number": "15"},
-            {"pattern": "ITEM 16. FORM 10-K SUMMARY", "name": "Form 10-K Summary", "number": "16"},
+            {"pattern": "ITEM 11. EXECUTIVE COMPENSATION", "name": "Executive Compensation", "number": "11"}
             ],
             'q10': [
-                {"pattern": "Item 1. Financial Statements", "name": "Financial Statements", "number": "1"},
-            {"pattern": "Item 2. Management’s Discussion and Analysis of Financial Condition and Results of Operations", "name": "Management's Discussion and Analysis", "number": "2"},
+            {"pattern": "Item 1. Financial Statements", "name": "Financial Statements and Supplementary Data", "number": "1"},
+            {"pattern": "Item 2. Management's Discussion and Analysis of Financial Condition", "name": "Management's Discussion and Analysis of Financial Condition and Results of Operations", "number": "2"},
             {"pattern": "Item 3. Quantitative and Qualitative Disclosures About Market Risk", "name": "Market Risk", "number": "3"},
-            {"pattern": "Item 4. CONTROLS AND PROCEDURES", "name": "Controls and Procedures", "number": "4"},
             {"pattern": "Item 1. Legal Proceedings", "name": "Legal Proceedings", "number": "5"},
             {"pattern": "Item 1A. Risk Factors", "name": "Risk Factors", "number": "6"},
-            {"pattern": "Item 2. Unregistered Sales of Equity Securities and Use of Proceeds", "name": "Unregistered Sales of Equity Securities and Use of Proceeds", "number": "7"},
+            {"pattern": "Item 2. Unregistered Sales of Equity Securities", "name": "Unregistered Sales of Equity Securities and Use of Proceeds", "number": "7"},
             {"pattern": "Item 3. Defaults Upon Senior Securities", "name": "Defaults Upon Senior Securities", "number": "8"},
             {"pattern": "Item 4. Mine Safety Disclosures", "name": "Mine Safety Disclosures", "number": "9"},
             {"pattern": "Item 5. Other Information", "name": "Other Information", "number": "10"},
             {"pattern": "Item 6. Exhibits", "name": "Exhibits", "number": "11"},
+            ]
+        }
+        
+        # Sections to ignore entirely (skip processing and exclude from unclassified) per form type
+        self.ignore_section_patterns = {
+            'k10': [
+                {"pattern": "ITEM 1B. UNRESOLVED STAFF COMMENTS", "name": "Unresolved Staff Comments", "number": "1b"},
+                {"pattern": "ITEM 1C. CYBERSECURITY", "name": "Cybersecurity", "number": "1c"},
+                {"pattern": "ITEM 6. RESERVED", "name": "Reserved", "number": "6"},
+                {"pattern": "ITEM 9. CHANGES IN AND DISAGREEMENTS", "name": "Changes in and Disagreements with Accountants on Accounting and Financial Disclosure", "number": "9"},
+                {"pattern": "ITEM 9A. CONTROLS AND PROCEDURES", "name": "Controls and Procedures", "number": "9a"},
+                {"pattern": "ITEM 9C. DISCLOSURE REGARDING FOREIGN JURISDICTIONS", "name": "Disclosure Regarding Foreign Jurisdictions that Prevent Inspections", "number": "9c"},
+                {"pattern": "ITEM 12. SECURITY OWNERSHIP", "name": "Security Ownership of Certain Beneficial Owners and Management and Related Stockholder Matters", "number": "12"},
+                {"pattern": "ITEM 13. CERTAIN RELATIONSHIPS", "name": "Certain Relationships and Related Transactions, and Director Independence", "number": "13"},
+                {"pattern": "ITEM 14. PRINCIPAL ACCOUNTANT FEES", "name": "Principal Accountant Fees and Services", "number": "14"},
+                {"pattern": "ITEM 15. EXHIBIT AND FINANCIAL STATEMENT", "name": "Exhibit and Financial Statement Schedules", "number": "15"},
+                {"pattern": "ITEM 16. FORM 10-K SUMMARY", "name": "Form 10-K Summary", "number": "16"}
+            ],
+            'q10': [
+                {"pattern": "Item 4. CONTROLS AND PROCEDURES", "name": "Controls and Procedures", "number": "4"},
+                {"pattern": "Item 5. Other Information", "name": "Other Information", "number": "10"},
+                {"pattern": "Item 6. Exhibits", "name": "Exhibits", "number": "11"}
             ]
         }
         
@@ -121,6 +132,15 @@ class ContentProcessor:
         else:
             return self.section_patterns['k10']
     
+    def get_ignore_patterns(self, form_type: Optional[str]) -> List[Dict]:
+        """Return ignore patterns based on form type (10-K vs 10-Q)."""
+        if form_type and '10-K' in form_type.upper():
+            return self.ignore_section_patterns['k10']
+        elif form_type and '10-Q' in form_type.upper():
+            return self.ignore_section_patterns['q10']
+        else:
+            return self.ignore_section_patterns['k10']
+
     def extract_document_content(self, content: str) -> str:
         """Extract main document content from SEC filing"""
         # Handle XBRL inline documents
@@ -184,6 +204,23 @@ class ContentProcessor:
             return ""
         
         text = soup.get_text(separator='\n')
+        
+        # Normalize unicode punctuation and spaces to improve matching
+        try:
+            text = unicodedata.normalize('NFKC', text)
+            replacements = {
+                '\u2019': "'",  # right single quote
+                '\u2018': "'",  # left single quote
+                '\u201C': '"',  # left double quote
+                '\u201D': '"',  # right double quote
+                '\u2013': '-',   # en dash
+                '\u2014': '-',   # em dash
+                '\xa0': ' ',     # non-breaking space
+            }
+            for k, v in replacements.items():
+                text = text.replace(k, v)
+        except Exception:
+            pass
         
         # Clean up the text
         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
@@ -355,8 +392,8 @@ class ContentProcessor:
             item_content = ""
         
         return header_line, item_content
-    
-    def extract_section_content(self, file_path: str, section_name: str, filing_metadata: Dict = None) -> Dict:
+
+    def extract_section_content(self, file_path: str, section_name: str, section_pattern: str, filing_metadata: Dict = None ) -> Dict:
         """Extract specific section with both text and tables, including comprehensive metadata"""
         # Read the file content
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -378,34 +415,36 @@ class ContentProcessor:
         clean_text = clean_text.replace("'", "'")
         clean_text = re.sub(r'\s+', ' ', clean_text)
         clean_text = re.sub(r'(?i)(?<!\n)(item\s*\d+[a-z]?\s*[\.\:])', r'\n\1', clean_text)
-        
+
         # Get appropriate section patterns
         items_config = self.get_section_patterns(filing_metadata.get('form_type') if filing_metadata else None)
-        all_patterns = [item["pattern"] for item in items_config]
+        # Include ignore patterns in all_patterns so boundaries stop at ignored headers too
+        ignore_items = self.get_ignore_patterns(filing_metadata.get('form_type') if filing_metadata else None)
+        all_patterns = [item["pattern"] for item in items_config] + [item["pattern"] for item in ignore_items]
         
-        # Find the current item configuration based on section_name
-        current_item = None
-        for item in items_config:
-            if item['name'] == section_name:
-                current_item = item
-                break
+        # # Find the current item configuration based on section_name
+        # current_item = None
+        # for item in items_config:
+        #     if item['name'] == section_name:
+        #         current_item = item
+        #         break
         
-        if current_item is None:
-            # Section not found
-            section_metadata = (filing_metadata or {}).copy()
-            section_metadata.update({
-                'section_found': False,
-                'section_name': section_name,
-                'text_length': 0,
-                'extraction_timestamp': datetime.now().isoformat()
-            })
-            return {
-                'text': '',
-                'metadata': section_metadata
-            }
+        # if current_item is None:
+        #     # Section not found
+        #     section_metadata = (filing_metadata or {}).copy()
+        #     section_metadata.update({
+        #         'section_found': False,
+        #         'section_name': section_name,
+        #         'text_length': 0,
+        #         'extraction_timestamp': datetime.now().isoformat()
+        #     })
+        #     return {
+        #         'text': '',
+        #         'metadata': section_metadata
+        #     }
         
         # Find ALL positions where this pattern appears (case-insensitive)
-        pattern_positions = self.find_all_pattern_positions(clean_text, current_item["pattern"])
+        pattern_positions = self.find_all_pattern_positions(clean_text, section_pattern)
         
         if pattern_positions:
             all_content_parts = []
@@ -422,7 +461,7 @@ class ContentProcessor:
                     # Extract clean content and header
                     expected_headers = (self.k10_expected_headers if filing_metadata and filing_metadata.get('form_type') and '10-K' in filing_metadata['form_type'].upper() 
                                       else self.q10_expected_headers)
-                    extracted_header, item_content = self.extract_clean_content(full_content, current_item["pattern"], expected_headers)
+                    extracted_header, item_content = self.extract_clean_content(full_content, section_pattern, expected_headers)
                     
                     if header_line is None:  # Use header from first occurrence
                         header_line = extracted_header
@@ -436,20 +475,20 @@ class ContentProcessor:
             section_metadata = (filing_metadata or {}).copy()
             section_metadata.update({
                 'section_found': True,
-                'section_name': current_item["name"],
+                'section_name': section_name,
                 'text_length': len(final_content),
                 'extraction_timestamp': datetime.now().isoformat(),
                 'occurrences_found': len(pattern_positions)
             })
             section_text = final_content
             
-            print(f"✓ Extracted {current_item['name']}: {len(final_content)} characters ({len(pattern_positions)} occurrences)")
+            print(f"✓ Extracted {section_name}: {len(final_content)} characters ({len(pattern_positions)} occurrences)")
         else:
-            print(f"✗ Could not find {current_item['name']}")
+            print(f"✗ Could not find {section_name}")
             section_metadata = (filing_metadata or {}).copy()
             section_metadata.update({
                 'section_found': False,
-                'section_name': current_item["name"],
+                'section_name': section_name,
                 'text_length': 0,
                 'extraction_timestamp': datetime.now().isoformat()
             })
@@ -461,7 +500,7 @@ class ContentProcessor:
         }
     
     def extract_unclassified_content(self, file_path: str, filing_metadata: Dict = None) -> Dict:
-        """Extract content that doesn't match any section patterns"""
+        """Extract content that doesn't match any section patterns, excluding ignored sections"""
         # Read the file content
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -484,12 +523,13 @@ class ContentProcessor:
         clean_text = re.sub(r'(?i)(?<!\n)(item\s*\d+[a-z]?\s*[\.\:])', r'\n\1', clean_text)
         
         items_config = self.get_section_patterns(filing_metadata.get('form_type') if filing_metadata else None)
-        all_patterns = [item["pattern"] for item in items_config]
+        ignore_items = self.get_ignore_patterns(filing_metadata.get('form_type') if filing_metadata else None)
+        all_patterns = [item["pattern"] for item in items_config] + [item["pattern"] for item in ignore_items]
         
-        # Find all section boundaries in the document
+        # Find all section boundaries in the document (including ignored)
         section_boundaries = []
         
-        for item in items_config:
+        for item in items_config + ignore_items:
             pattern_positions = self.find_all_pattern_positions(clean_text, item["pattern"])
             for pos in pattern_positions:
                 end_pos = self.find_next_item_boundary(clean_text, pos, all_patterns)
@@ -537,3 +577,142 @@ class ContentProcessor:
             'text': final_unclassified_content,
             'metadata': section_metadata
         }
+    
+    def preprocess_filing(self, file_path: str, filing_metadata: Dict = None) -> Dict:
+        """Preprocess a filing once: read, extract main document, clean HTML, get clean text, and build pattern lists.
+        Returns a dict with clean_text, items_config, all_patterns, and form_type.
+        Also saves the cleaned text to a sidecar file for debugging once per filing.
+        """
+        # Read the file content
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        # Extract document content
+        html_content = self.extract_document_content(content)
+        
+        # Clean HTML
+        soup = self.clean_html_content(html_content)
+        if not soup:
+            return {
+                'clean_text': '',
+                'items_config': [],
+                'all_patterns': [],
+                'form_type': (filing_metadata or {}).get('form_type')
+            }
+        
+        # Get clean text
+        clean_text = self.extract_clean_text(soup)
+        
+        # Normalize and add item line breaks
+        clean_text = clean_text.replace("'", "'")
+        clean_text = re.sub(r'\s+', ' ', clean_text)
+        clean_text = re.sub(r'(?i)(?<!\n)(item\s*\d+[a-z]?\s*[\.\:])', r'\n\1', clean_text)
+        
+        # Build patterns for this form type
+        items_config = self.get_section_patterns((filing_metadata or {}).get('form_type'))
+        all_patterns = [item["pattern"] for item in items_config]
+        
+        return {
+            'clean_text': clean_text,
+            'items_config': items_config,
+            'all_patterns': all_patterns,
+            'form_type': (filing_metadata or {}).get('form_type')
+        }
+
+    def extract_section_content_from_preprocessed(self, pre: Dict, section_name: str, section_pattern: str, filing_metadata: Dict = None) -> Dict:
+        """Extract a section using preprocessed clean_text and patterns to avoid re-cleaning per section."""
+        clean_text = pre.get('clean_text') or ''
+        items_config = pre.get('items_config') or []
+        all_patterns = pre.get('all_patterns') or []
+        
+        if not clean_text:
+            return {'text': '', 'metadata': (filing_metadata or {})}
+        
+        # Find all occurrences
+        pattern_positions = self.find_all_pattern_positions(clean_text, section_pattern)
+        
+        if pattern_positions:
+            all_content_parts = []
+            header_line = None
+            
+            for i, start_pos in enumerate(pattern_positions):
+                end_pos = self.find_next_item_boundary(clean_text, start_pos, all_patterns)
+                full_content = clean_text[start_pos:end_pos].strip()
+                if full_content:
+                    expected_headers = (
+                        self.k10_expected_headers
+                        if filing_metadata and filing_metadata.get('form_type') and '10-K' in filing_metadata['form_type'].upper()
+                        else self.q10_expected_headers
+                    )
+                    extracted_header, item_content = self.extract_clean_content(full_content, section_pattern, expected_headers)
+                    if header_line is None:
+                        header_line = extracted_header
+                    if item_content.strip():
+                        all_content_parts.append(item_content.strip())
+            
+            final_content = '\n\n--- SECTION BREAK ---\n\n'.join(all_content_parts)
+            section_metadata = (filing_metadata or {}).copy()
+            section_metadata.update({
+                'section_found': True,
+                'section_name': section_name,
+                'text_length': len(final_content),
+                'extraction_timestamp': datetime.now().isoformat(),
+                'occurrences_found': len(pattern_positions)
+            })
+            print(f"✓ Extracted {section_name}: {len(final_content)} characters ({len(pattern_positions)} occurrences)")
+            return {'text': final_content, 'metadata': section_metadata}
+        else:
+            print(f"✗ Could not find {section_name}")
+            section_metadata = (filing_metadata or {}).copy()
+            section_metadata.update({
+                'section_found': False,
+                'section_name': section_name,
+                'text_length': 0,
+                'extraction_timestamp': datetime.now().isoformat()
+            })
+            return {'text': '', 'metadata': section_metadata}
+
+    def extract_unclassified_content_from_preprocessed(self, pre: Dict, filing_metadata: Dict = None) -> Dict:
+        """Extract unclassified content using preprocessed clean_text to avoid re-cleaning, excluding ignored sections."""
+        clean_text = pre.get('clean_text') or ''
+        items_config = pre.get('items_config') or []
+        ignore_items = self.get_ignore_patterns((filing_metadata or {}).get('form_type'))
+        all_patterns = [item["pattern"] for item in items_config] + [item["pattern"] for item in ignore_items]
+        
+        if not clean_text:
+            return {'text': '', 'metadata': (filing_metadata or {})}
+        
+        # Find all section boundaries
+        section_boundaries: List[Tuple[int, int]] = []
+        for item in items_config + ignore_items:
+            pattern_positions = self.find_all_pattern_positions(clean_text, item["pattern"])
+            for pos in pattern_positions:
+                end_pos = self.find_next_item_boundary(clean_text, pos, all_patterns)
+                section_boundaries.append((pos, end_pos))
+        section_boundaries.sort(key=lambda x: x[0])
+        
+        # Extract unclassified segments
+        unclassified_segments: List[str] = []
+        current_pos = 0
+        for start_pos, end_pos in section_boundaries:
+            if current_pos < start_pos:
+                unclassified_text = clean_text[current_pos:start_pos].strip()
+                if len(unclassified_text) > 100:
+                    unclassified_segments.append(unclassified_text)
+            current_pos = end_pos
+        if current_pos < len(clean_text):
+            remaining_text = clean_text[current_pos:].strip()
+            if len(remaining_text) > 100:
+                unclassified_segments.append(remaining_text)
+        
+        final_unclassified_content = '\n\n--- UNCLASSIFIED SECTION BREAK ---\n\n'.join(unclassified_segments)
+        section_metadata = (filing_metadata or {}).copy()
+        section_metadata.update({
+            'section_found': len(unclassified_segments) > 0,
+            'section_name': 'Unclassified Content',
+            'text_length': len(final_unclassified_content),
+            'unclassified_segments_count': len(unclassified_segments),
+            'extraction_timestamp': datetime.now().isoformat()
+        })
+        print(f"✓ Extracted Unclassified Content: {len(final_unclassified_content)} characters ({len(unclassified_segments)} segments)")
+        return {'text': final_unclassified_content, 'metadata': section_metadata}

@@ -12,25 +12,43 @@ from datetime import datetime, timedelta
 from functools import wraps
 
 # Import all the modules we created
-from .data_source_interface import (
-    TranscriptQuery, DataSourceError, transcript_registry
-)
-from .alpha_vantage_source import register_alpha_vantage_source
-from .transcript_metadata_extractor import TranscriptMetadataExtractor
-from .transcript_content_processor import TranscriptContentProcessor
-from .transcript_chunk_generator import TranscriptChunkGenerator
-from .transcript_config import (
-    get_transcript_config, get_transcript_config_manager,
-    validate_transcript_environment
-)
+try:
+    from .data_source_interface import (
+        TranscriptQuery, DataSourceError, transcript_registry
+    )
+    from .alpha_vantage_source import register_alpha_vantage_source
+    from .transcript_metadata_extractor import TranscriptMetadataExtractor
+    from .transcript_content_processor import TranscriptContentProcessor
+    from .transcript_chunk_generator import TranscriptChunkGenerator
+    from .transcript_config import (
+        get_transcript_config, get_transcript_config_manager,
+        validate_transcript_environment
+    )
+    from .simple_quarters_tracker import SimpleQuartersTracker
+except ImportError:
+    # Fallback for direct script execution
+    from data_source_interface import (
+        TranscriptQuery, DataSourceError, transcript_registry
+    )
+    from alpha_vantage_source import register_alpha_vantage_source
+    from transcript_metadata_extractor import TranscriptMetadataExtractor
+    from transcript_content_processor import TranscriptContentProcessor
+    from transcript_chunk_generator import TranscriptChunkGenerator
+    from transcript_config import (
+        get_transcript_config, get_transcript_config_manager,
+        validate_transcript_environment
+    )
+    from simple_quarters_tracker import SimpleQuartersTracker
 
-# Load environment variables from .env file
+# Load environment variables from TranscriptRAG .env file
 try:
     from dotenv import load_dotenv
-    # Try loading from current directory first, then parent directory
-    load_dotenv()
-    load_dotenv('../.env')  # Load from parent directory where .env exists
+    from pathlib import Path
+    # Load .env file from TranscriptRAG directory
+    env_path = Path(__file__).parent / '.env'
+    load_dotenv(env_path)
 except ImportError:
+    # dotenv not available, will use system environment variables
     pass
 
 
@@ -89,18 +107,24 @@ class TranscriptProcessor:
         all_chunks = []
         chunk_id_counter = 0
         
-        # Process each section
+        # Process each section using specialized chunking strategies
         for section_data in section_chunks_data:
             section_text = section_data['text']
             section_metadata = section_data['metadata']
+            section_name = section_metadata.get('section_name', '')
             
-            if use_speaker_chunking and 'Q&A' in section_metadata.get('section_name', ''):
-                # Use speaker-aware chunking for Q&A sections
-                section_chunks = self.chunk_generator.create_speaker_aware_chunks(
-                    section_text, section_metadata, chunk_size, overlap
+            if 'Q&A' in section_name:
+                # Use Q&A-specific chunking that groups questions with answers
+                section_chunks = self.chunk_generator.create_qa_grouped_chunks(
+                    section_text, section_metadata, chunk_size=1200, overlap=0
+                )
+            elif 'Opening Remarks' in section_name:
+                # Use no-overlap chunking for opening remarks (preserves JSON entry boundaries)
+                section_chunks = self.chunk_generator.create_opening_remarks_chunks(
+                    section_text, section_metadata, chunk_size=chunk_size
                 )
             else:
-                # Use regular chunking
+                # Fallback to regular chunking for other sections
                 section_chunks = self.chunk_generator.create_transcript_chunks(
                     section_text, section_metadata, chunk_size, overlap
                 )
@@ -181,71 +205,193 @@ def process_single_ticker_transcripts(
     chunk_size: int,
     overlap: int,
     limit: Optional[int],
-    correlation_id: str
+    correlation_id: str,
+    expected_quarters: Optional[List[str]] = None
 ) -> Dict:
-    """Process transcripts for a single ticker"""
+    """Process transcripts for a single ticker with intelligent caching"""
     
     ticker_results = {'success': [], 'failures': []}
     
+    # Get configuration to check if intelligent caching is enabled
+    config = get_transcript_config()
+    
     try:
+        # Initialize simple quarters tracker
+        quarters_tracker = SimpleQuartersTracker()
+        
+        # Use expected quarters if provided (fiscal-aware), otherwise fall back to old logic
+        if expected_quarters:
+            print(f"  📋 Using fiscal-aware quarters: {expected_quarters}")
+            
+            # Convert fiscal quarters format (2025Q4) to simple format (Q4 2025) for quarters tracker
+            simple_format_quarters = []
+            for fq in expected_quarters:
+                if 'Q' in fq:
+                    year_str, quarter_str = fq.split('Q')
+                    simple_format_quarters.append(f"Q{quarter_str} {year_str}")
+            
+            # Check which quarters are already ingested
+            ingested_quarters = quarters_tracker.get_ingested_quarters(ticker)
+            quarters_to_fetch = [q for q in simple_format_quarters if q not in ingested_quarters]
+            
+            print(f"  🔍 Expected quarters: {simple_format_quarters}")
+            print(f"  ✅ Already ingested: {ingested_quarters}")
+            print(f"  📥 Missing quarters: {quarters_to_fetch}")
+            
+        else:
+            # Calculate quarters_back from date range 
+            days_diff = (end_date - start_date).days
+            quarters_back = max(1, days_diff // 90)  # ~90 days per quarter
+            
+            # Check which quarters need to be fetched (old logic)
+            quarters_to_fetch = quarters_tracker.generate_quarters_to_fetch(ticker, quarters_back)
+        
+        if not quarters_to_fetch:
+            total_quarters = len(expected_quarters) if expected_quarters else quarters_back
+            print(f"  ✅ All {total_quarters} quarters already ingested for {ticker}")
+            print(f"  🚀 Skipping API calls - no new quarters to fetch")
+            
+            # Instead of returning empty results, create cache hit response
+            # Check what quarters are available from cache
+            try:
+                # Get the quarters that were expected to be cached
+                cached_quarters = expected_quarters if expected_quarters else []
+                if not cached_quarters:
+                    # Generate quarters based on quarters_back if expected_quarters not available
+                    current_date = datetime.now()
+                    cached_quarters = []
+                    for i in range(quarters_back):
+                        # Go back i quarters (3 months each)
+                        quarter_date = current_date - timedelta(days=i * 90)
+                        quarter_num = ((quarter_date.month - 1) // 3) + 1
+                        cached_quarters.append(f"Q{quarter_num} {quarter_date.year}")
+                
+                # Create cache hit responses for each cached quarter
+                cache_hit_results = []
+                for quarter_str in cached_quarters:
+                    # Parse quarter string for metadata
+                    parts = quarter_str.split()
+                    if len(parts) == 2:
+                        quarter_part = parts[0]  # "Q1" 
+                        year_part = parts[1]     # "2025"
+                        quarter_num = quarter_part[1:] if quarter_part.startswith('Q') else "1"
+                        
+                        cache_hit_result = {
+                            'ticker': ticker.upper(),
+                            'quarter': quarter_num,
+                            'fiscal_year': year_part,
+                            'transcript_date': f"{year_part}-{(int(quarter_num)-1)*3+3:02d}-15T00:00:00",  # Approximate date
+                            'transcript_type': 'earnings_call',
+                            'processed_at': datetime.now().isoformat(),
+                            'source': 'cache_hit',
+                            'transcript_dataset': {
+                                'chunks': [],  # We don't need to load actual chunks for cache hit
+                                'chunk_count': 0,  # Will be updated by vector store if needed
+                                'metadata': {
+                                    'source': 'vector_database_cache',
+                                    'ticker': ticker.upper(),
+                                    'quarter': quarter_num,
+                                    'fiscal_year': year_part
+                                }
+                            }
+                        }
+                        cache_hit_results.append(cache_hit_result)
+                
+                # Add cache hit results to ticker_results
+                ticker_results['success'].extend(cache_hit_results)
+                print(f"  📊 Created cache hit response for {len(cache_hit_results)} quarters")
+                
+            except Exception as cache_error:
+                print(f"  ⚠️ Error creating cache hit response: {cache_error}")
+            
+            return ticker_results
+        
+        print(f"  🎯 Need to fetch {len(quarters_to_fetch)} quarters: {quarters_to_fetch}")
+        
         # Get data source
         data_source = transcript_registry.get_source()
         
-        # Create query
-        query = TranscriptQuery(
-            ticker=ticker,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit
-        )
+        # Process each quarter individually
+        successful_quarters = []
         
-        # Fetch transcripts
-        print(f"  Fetching transcripts for {ticker}...")
-        transcripts = data_source.get_transcripts(query)
-        
-        print(f"    Found {len(transcripts)} transcripts")
-        
-        # Process each transcript
-        for transcript_data in transcripts:
+        for quarter_str in quarters_to_fetch:
             try:
-                print(f"    Processing: {transcript_data.quarter} {transcript_data.fiscal_year}")
+                print(f"    📥 Fetching transcript for {quarter_str}...")
                 
-                # Process transcript into chunks
-                processed_result = processor.process_transcript_data(
-                    transcript_data=transcript_data,
-                    chunk_size=chunk_size,
-                    overlap=overlap
-                )
+                # Parse quarter string (e.g., "Q1 2025" -> quarter="1", year="2025")
+                parts = quarter_str.split()
+                if len(parts) != 2:
+                    print(f"      ❌ Invalid quarter format: {quarter_str}")
+                    continue
                 
-                # Add to success results
-                result_data = {
-                    'ticker': ticker,
-                    'transcript_date': transcript_data.transcript_date.isoformat(),
-                    'quarter': transcript_data.quarter,
-                    'fiscal_year': transcript_data.fiscal_year,
-                    'transcript_type': transcript_data.transcript_type,
-                    'transcript_dataset': processed_result,
-                    'processed_at': datetime.now().isoformat()
+                quarter_part = parts[0]  # "Q1"
+                year_part = parts[1]     # "2025"
+                
+                if not quarter_part.startswith('Q') or not quarter_part[1:].isdigit():
+                    print(f"      ❌ Invalid quarter format: {quarter_part}")
+                    continue
+                
+                quarter_num = quarter_part[1:]  # "1"
+                
+                # Create Alpha Vantage query for specific quarter
+                params = {
+                    'function': 'EARNINGS_CALL_TRANSCRIPT',
+                    'symbol': ticker.upper(),
+                    'quarter': f"{year_part}Q{quarter_num}"  # "2025Q1"
                 }
                 
-                ticker_results['success'].append(result_data)
-                print(f"    ✓ Successfully processed {transcript_data.quarter} {transcript_data.fiscal_year}")
+                # Make direct API call
+                api_data = data_source._make_request(params)
+                transcript_data = data_source._parse_transcript_data(api_data, ticker, f"{year_part}Q{quarter_num}")
                 
+                if transcript_data:
+                    print(f"      ✓ Processing transcript data...")
+                    
+                    # Process transcript into chunks
+                    processed_result = processor.process_transcript_data(
+                        transcript_data=transcript_data,
+                        chunk_size=chunk_size,
+                        overlap=overlap
+                    )
+                    
+                    # Add to success results
+                    result_data = {
+                        'ticker': ticker,
+                        'transcript_date': transcript_data.transcript_date.isoformat(),
+                        'quarter': transcript_data.quarter,
+                        'fiscal_year': transcript_data.fiscal_year,
+                        'transcript_type': transcript_data.transcript_type,
+                        'transcript_dataset': processed_result,
+                        'processed_at': datetime.now().isoformat()
+                    }
+                    
+                    ticker_results['success'].append(result_data)
+                    successful_quarters.append(quarter_str)
+                    
+                    print(f"      ✓ Successfully processed {quarter_str}")
+                else:
+                    print(f"      ❌ No transcript data found for {quarter_str}")
+                    
             except Exception as e:
-                TranscriptAuditLogger.log_error(
-                    correlation_id, 'PROCESSING_ERROR', 
-                    f"Failed to process transcript for {ticker}"
-                )
+                print(f"      ❌ Failed to process {quarter_str}: {str(e)}")
                 error_detail = {
                     'ticker': ticker,
-                    'transcript_date': transcript_data.transcript_date.isoformat(),
-                    'quarter': transcript_data.quarter,
-                    'error': 'Processing failed - see logs for details',
+                    'quarter_string': quarter_str,
+                    'error': f'Processing failed: {str(e)}',
                     'error_time': datetime.now().isoformat(),
                     'correlation_id': correlation_id
                 }
                 ticker_results['failures'].append(error_detail)
-                print(f"    ✗ Failed to process {transcript_data.quarter} {transcript_data.fiscal_year}")
+        
+        # Mark successful quarters as ingested
+        if successful_quarters:
+            success = quarters_tracker.add_multiple_quarters(ticker, successful_quarters)
+            if success:
+                print(f"    💾 Updated ingestion tracking: {len(successful_quarters)} quarters")
+            else:
+                print(f"    ⚠️ Failed to update ingestion tracking")
+        
+        print(f"  🎉 Ingestion complete: {len(successful_quarters)} quarters processed")
         
     except DataSourceError as e:
         TranscriptAuditLogger.log_error(
@@ -281,14 +427,15 @@ def process_single_ticker_transcripts(
 def get_transcript_chunks(
     tickers: List[str],
     start_date: str,
-    years_back: int = 3,
+    quarters_back: int = 4,
     chunk_size: int = 800,
     overlap: int = 150,
     limit_per_ticker: Optional[int] = None,
     use_speaker_chunking: bool = None,
     return_full_data: bool = False,
     output_dir: str = None,
-    correlation_id: str = None
+    correlation_id: str = None,
+    expected_quarters: Optional[List[str]] = None
 ) -> Dict:
     """
     Main API function to get transcript chunks for multiple tickers
@@ -299,7 +446,7 @@ def get_transcript_chunks(
     Args:
         tickers: List of company ticker symbols (1-5 letters each)
         start_date: Start date in 'YYYY-MM-DD' format
-        years_back: Number of years to look back (1-10)
+        quarters_back: Number of quarters to look back (1-20)
         chunk_size: Size of text chunks for RAG (100-2000)
         overlap: Overlap between chunks (0 to chunk_size-1)
         limit_per_ticker: Maximum transcripts per ticker (optional)
@@ -317,14 +464,6 @@ def get_transcript_chunks(
     if correlation_id is None:
         correlation_id = str(uuid.uuid4())
     
-    # Audit log the request
-    TranscriptAuditLogger.log_request(correlation_id, 'get_transcript_chunks_start', {
-        'tickers': tickers,
-        'start_date': start_date,
-        'years_back': years_back,
-        'chunk_size': chunk_size,
-        'overlap': overlap
-    })
     
     try:
         # Validate configuration
@@ -347,13 +486,14 @@ def get_transcript_chunks(
                 raise ValueError(f"Invalid ticker '{ticker}'. Must be 1-5 letters.")
         
         # Validate processing parameters
-        if not config_manager.validate_processing_params(chunk_size, overlap, years_back):
+        if not config_manager.validate_processing_params(chunk_size, overlap, quarters_back):
             raise ValueError("Invalid processing parameters")
         
-        # Parse dates
+        # Parse dates properly - start_date is the actual start date, not end date
         try:
-            end_dt = datetime.strptime(start_date, '%Y-%m-%d')
-            start_dt = end_dt - timedelta(days=365 * years_back)
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            # End date is current date (we're looking for transcripts from start_date to now)
+            end_dt = datetime.now()
         except ValueError:
             raise ValueError("start_date must be in format 'YYYY-MM-DD'")
         
@@ -374,7 +514,7 @@ def get_transcript_chunks(
                 'parameters': {
                     'tickers': tickers,
                     'start_date': start_date,
-                    'years_back': years_back,
+                    'quarters_back': quarters_back,
                     'chunk_size': chunk_size,
                     'overlap': overlap,
                     'use_speaker_chunking': use_speaker_chunking
@@ -399,7 +539,8 @@ def get_transcript_chunks(
                 chunk_size=chunk_size,
                 overlap=overlap,
                 limit=limit_per_ticker,
-                correlation_id=correlation_id
+                correlation_id=correlation_id,
+                expected_quarters=expected_quarters
             )
             
             # Add ticker results to overall results
@@ -446,6 +587,10 @@ def get_transcript_chunks(
                 'processed_at': success['processed_at']
             }
             
+            # Include source if it exists (for cache hit tracking)
+            if 'source' in success:
+                transcript_info['source'] = success['source']
+            
             # Include full dataset if requested
             if return_full_data:
                 transcript_info['transcript_dataset'] = success['transcript_dataset']
@@ -485,13 +630,13 @@ if __name__ == "__main__":
     print("Example Transcript API call:")
     print(f"Processing tickers: {tickers}")
     print(f"Start date: {start_date}")
-    print(f"Years back: 2")
+    print(f"Quarters back: 4")
     
     # Call the API
     results = get_transcript_chunks(
         tickers=tickers,
         start_date=start_date,
-        years_back=1,
+        quarters_back=4,
         return_full_data=False,  # Set to True to get full datasets
         output_dir= './transcript_results',  # Specify output directory
     )

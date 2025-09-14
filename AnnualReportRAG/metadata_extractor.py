@@ -5,7 +5,7 @@ Separated from monolithic SECFilingCleanerChunker for better modularity
 
 import re
 import os
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from datetime import datetime, date
 from pathlib import Path
 
@@ -29,14 +29,10 @@ class MetadataExtractor:
         # Pre-compiled metadata patterns for performance
         self._metadata_patterns = {
             'company_name': re.compile(r'COMPANY CONFORMED NAME:\s*([^\n\r]+)', re.IGNORECASE),
-            'central_index_key': re.compile(r'CENTRAL INDEX KEY:\s*([^\n\r]+)', re.IGNORECASE),
             'form_type': re.compile(r'FORM TYPE:\s*([^\n\r]+)', re.IGNORECASE),
             'filing_date': re.compile(r'FILED AS OF DATE:\s*(\d{8})', re.IGNORECASE),
             'period_end_date': re.compile(r'CONFORMED PERIOD OF REPORT:\s*(\d{8})', re.IGNORECASE),
             'fiscal_year_end': re.compile(r'FISCAL YEAR END:\s*(\d{4})', re.IGNORECASE),
-            'sic_code': re.compile(r'STANDARD INDUSTRIAL CLASSIFICATION:[^\[]*\[(\d{4})\]', re.IGNORECASE),
-            'state_incorporation': re.compile(r'STATE OF INCORPORATION:\s*([^\n\r]+)', re.IGNORECASE),
-            'irs_number': re.compile(r'IRS NUMBER:\s*([^\n\r]+)', re.IGNORECASE),
         }
     
     def extract_filing_metadata(self, file_path: str, content: str) -> Dict:
@@ -44,16 +40,12 @@ class MetadataExtractor:
         metadata = {
             'company_name': None,
             'ticker': None,
-            'central_index_key': None,
             'form_type': None,
             'filing_date': None,
             'period_end_date': None,
             'fiscal_year_end': None,
             'fiscal_year': None,
             'fiscal_quarter': None,
-            'sic_code': None,
-            'state_incorporation': None,
-            'irs_number': None
         }
         
         try:
@@ -78,18 +70,8 @@ class MetadataExtractor:
             
             # Calculate fiscal info
             if metadata['period_end_date'] and metadata['fiscal_year_end']:
-                self._calculate_fiscal_info(metadata)
+                self._calculate_fiscal_info(metadata, content)
             
-            # Search body content for missing fields if needed
-            missing_fields = []
-            if not metadata['sic_code']:
-                missing_fields.append('sic_code')
-            if not metadata['state_incorporation']:
-                missing_fields.append('state_incorporation')
-            
-            if missing_fields:
-                self._search_body_content(file_path, metadata, missing_fields)
-                
         except Exception as e:
             print(f"Error extracting metadata: {e}")
             
@@ -117,8 +99,13 @@ class MetadataExtractor:
         
         return None
     
-    def _calculate_fiscal_info(self, metadata: Dict) -> None:
-        """Calculate fiscal year and quarter information"""
+    def _calculate_fiscal_info(self, metadata: Dict, full_content: str) -> None:
+        """Calculate fiscal year and quarter information.
+        For 10-Q filings, infer quarter by counting phrases in the document:
+        - "nine months ended" => Q3
+        - "six months ended" => Q2
+        - otherwise => Q1
+        """
         try:
             period_date = metadata['period_end_date']
             if isinstance(period_date, str):
@@ -138,89 +125,23 @@ class MetadataExtractor:
                 
                 metadata['fiscal_year'] = fiscal_year
                 
-                # Calculate quarter for 10-Q
+                # Calculate quarter for 10-Q using content-based heuristics
                 if metadata.get('form_type') and '10-Q' in metadata['form_type']:
-                    if fiscal_month == 12 and fiscal_day == 31:
-                        # Calendar year quarters
-                        quarter_map = {1: 'Q1', 2: 'Q1', 3: 'Q1', 
-                                    4: 'Q2', 5: 'Q2', 6: 'Q2',
-                                    7: 'Q3', 8: 'Q3', 9: 'Q3', 
-                                    10: 'Q4', 11: 'Q4', 12: 'Q4'}
-                        metadata['fiscal_quarter'] = quarter_map.get(period_date.month, 'Q1')
-                    else:
-                        # Fiscal year quarters
-                        try:
-                            if fiscal_month < 12:
-                                fy_start_month = fiscal_month + 1
-                                fy_start_year = fiscal_year - 1
-                            else:
-                                fy_start_month = 1
-                                fy_start_year = fiscal_year - 1
-                            
-                            fy_start = date(fy_start_year, fy_start_month, 1)
-                            days_into_fy = (period_date - fy_start).days
-                            
-                            if days_into_fy <= 90:
-                                metadata['fiscal_quarter'] = 'Q1'
-                            elif days_into_fy <= 180:
-                                metadata['fiscal_quarter'] = 'Q2'
-                            elif days_into_fy <= 270:
-                                metadata['fiscal_quarter'] = 'Q3'
-                            else:
-                                metadata['fiscal_quarter'] = 'Q4'
-                        except:
+                    try:
+                        text = (full_content or '').lower()
+                        # Count occurrences (simple heuristic)
+                        nine_count = len(re.findall(r"\bnine\s+months\s+ended\b", text))
+                        six_count = len(re.findall(r"\bsix\s+months\s+ended\b", text))
+                        # Threshold for "a lot"; tune as needed
+                        threshold = 2
+                        if (nine_count >= threshold and nine_count > six_count) or (nine_count == 1 and six_count == 0):
+                            metadata['fiscal_quarter'] = 'Q3'
+                        elif (six_count >= threshold and six_count > nine_count) or six_count >= 1:
+                            metadata['fiscal_quarter'] = 'Q2'
+                        else:
                             metadata['fiscal_quarter'] = 'Q1'
-                                
+                    except Exception:
+                        # Fallback default for 10-Q
+                        metadata['fiscal_quarter'] = 'Q1'
         except Exception as e:
             print(f"Error calculating fiscal year/quarter: {e}")
-    
-    def _search_body_content(self, file_path: str, metadata: Dict, missing_fields: List[str]) -> None:
-        """Search body content for missing metadata fields"""
-        if not missing_fields:
-            return
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore', buffering=8192) as f:
-                f.seek(100000)  # Skip header
-                body_content = f.read(400000)  # Read next 400KB
-            
-            # Pre-compiled body search patterns
-            body_search_patterns = {
-                'sic_code': [
-                    re.compile(r'SIC(?:\s+Code)?[:\s]+(\d{4})', re.IGNORECASE),
-                    re.compile(r'Standard Industrial Classification[:\s]+[^(\d]*(\d{4})', re.IGNORECASE),
-                    re.compile(r'Industry[:\s]+[^\[]*\[(\d{4})\]', re.IGNORECASE)
-                ],
-                'state_incorporation': [
-                    re.compile(r'(Delaware)\s+corporation', re.IGNORECASE),
-                    re.compile(r'(California)\s+corporation', re.IGNORECASE),
-                    re.compile(r'(Nevada)\s+corporation', re.IGNORECASE),
-                    re.compile(r'incorporated?\s+(?:in\s+)?(?:the\s+)?(?:state\s+of\s+)?([A-Z][a-z]+)', re.IGNORECASE),
-                ]
-            }
-            
-            state_mapping = {
-                'Delaware': 'DE', 'California': 'CA', 'Nevada': 'NV',
-                'New York': 'NY', 'Texas': 'TX', 'Florida': 'FL',
-                'Illinois': 'IL', 'Pennsylvania': 'PA', 'Ohio': 'OH',
-                'Georgia': 'GA', 'North Carolina': 'NC', 'Michigan': 'MI'
-            }
-            
-            # Search for missing fields
-            if 'sic_code' in missing_fields and not metadata['sic_code']:
-                for pattern in body_search_patterns['sic_code']:
-                    match = pattern.search(body_content)
-                    if match:
-                        metadata['sic_code'] = match.group(1)
-                        break
-            
-            if 'state_incorporation' in missing_fields and not metadata['state_incorporation']:
-                for pattern in body_search_patterns['state_incorporation']:
-                    match = pattern.search(body_content)
-                    if match:
-                        state_name = match.group(1).title()
-                        metadata['state_incorporation'] = state_mapping.get(state_name, state_name[:2].upper())
-                        break
-                        
-        except Exception as e:
-            print(f"Error searching body content: {e}")

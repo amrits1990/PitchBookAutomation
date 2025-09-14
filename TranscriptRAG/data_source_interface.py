@@ -31,7 +31,7 @@ class TranscriptQuery:
     ticker: str
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
-    years_back: Optional[int] = None
+    quarters_back: Optional[int] = None
     limit: Optional[int] = None
     transcript_type: Optional[str] = None
 

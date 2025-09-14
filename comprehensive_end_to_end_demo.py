@@ -5,10 +5,11 @@ Comprehensive End-to-End Demo
 This demo tests all RAG packages with real data:
 1. AnnualReportRAG - Uses cached WERN data
 2. SharePriceRAG - Gets real price data 
-3. NewsRAG - Fetches real news (requires API key)
-4. TranscriptRAG - Fetches real transcripts (requires API key)
-5. Vector Database - Stores and searches all data
-6. Tests end-to-end functionality with sample queries
+3. SECFinancialRAG - Fetches financial statements and calculates ratios
+4. NewsRAG - Fetches real news (requires API key)
+5. TranscriptRAG - Fetches real transcripts (requires API key)
+6. Vector Database - Stores and searches all data
+7. Tests end-to-end functionality with sample queries
 
 Usage: python comprehensive_end_to_end_demo.py
 """
@@ -320,6 +321,183 @@ class EndToEndDemo:
                 import traceback
                 traceback.print_exc()
             self.results["SharePriceRAG"] = False
+            return False
+
+    def test_sec_financial_rag(self, ticker=DEMO_TICKER):
+        """Test SECFinancialRAG with real data"""
+        print(f"\n💰 Testing SECFinancialRAG with {ticker}")
+        print("-" * 40)
+        
+        try:
+            from SECFinancialRAG import (
+                get_financial_data,
+                get_company_ratios_only,
+                get_company_ltm_only,
+                test_database_connection,
+                get_system_status
+            )
+            
+            # Step 1: Test system connectivity
+            print(f"🔧 Testing system connectivity...")
+            db_connected = test_database_connection()
+            system_status = get_system_status()
+            
+            if db_connected and system_status.get("database_connected"):
+                print(f"✅ Database connection: OK")
+                print(f"   📊 Tables available: {len(system_status.get('available_tables', []))}")
+            else:
+                print(f"⚠️  Database connection issues - using cached data if available")
+            
+            # Step 2: Test financial data retrieval
+            print(f"\n📊 Fetching financial statements for {ticker}...")
+            financial_df = get_financial_data(ticker=ticker)
+            
+            if financial_df is not None and not financial_df.empty:
+                print(f"✅ Retrieved financial data")
+                print(f"   📄 Records: {len(financial_df)}")
+                print(f"   📊 Columns: {len(financial_df.columns)}")
+                print(f"   📅 Date range: {financial_df.index.min()} to {financial_df.index.max()}")
+                
+                # Extract key financial metrics for vector storage
+                financial_chunks = []
+                
+                # Create summary chunk from latest data
+                if len(financial_df) > 0:
+                    latest_data = financial_df.iloc[-1]  # Most recent record
+                    
+                    # Extract key metrics (with safe defaults)
+                    revenue = latest_data.get("revenue", "N/A")
+                    net_income = latest_data.get("net_income", "N/A") 
+                    total_assets = latest_data.get("total_assets", "N/A")
+                    
+                    summary_chunk = {
+                        "content": f"{ticker} Financial Summary: Revenue ${revenue}, Net Income ${net_income}, Total Assets ${total_assets}. Shows financial position with comprehensive metrics across key performance indicators.",
+                        "metadata": {
+                            "ticker": ticker,
+                            "source": "financial_statements",
+                            "statement_type": "summary",
+                            "revenue": str(revenue),
+                            "net_income": str(net_income),
+                            "total_assets": str(total_assets),
+                            "date": datetime.now().isoformat(),
+                            "record_count": len(financial_df)
+                        }
+                    }
+                    summary_chunk["source"] = "financial_statements"
+                    financial_chunks.append(summary_chunk)
+                
+                # Add to all chunks for vector testing
+                self.all_chunks.extend(financial_chunks)
+                
+            else:
+                print(f"⚠️  No financial data retrieved for {ticker}")
+                print("   💡 This may be due to database connectivity or missing data")
+                
+                # Create mock financial data
+                mock_chunk = {
+                    "content": f"Mock financial data: {ticker} shows strong revenue growth and healthy profit margins with solid balance sheet fundamentals.",
+                    "metadata": {"ticker": ticker, "source": "financial_statements", "status": "mock_data"}
+                }
+                mock_chunk["source"] = "financial_statements"
+                self.all_chunks.append(mock_chunk)
+                print("   📄 Created mock financial data for testing")
+            
+            # Step 3: Test ratio calculations
+            print(f"\n📈 Testing financial ratio calculations...")
+            ratio_df = get_company_ratios_only(ticker=ticker)
+            
+            if ratio_df is not None and not ratio_df.empty:
+                # Filter to just ratio columns (exclude basic financial statement items)
+                ratio_columns = [col for col in ratio_df.columns if any(keyword in col.lower() 
+                                for keyword in ['ratio', 'margin', 'return', 'turnover', 'coverage'])]
+                
+                print(f"✅ Calculated financial ratios")
+                print(f"   📊 Ratio metrics: {len(ratio_columns)}")
+                
+                # Show sample ratios from latest period
+                if len(ratio_columns) > 0 and len(ratio_df) > 0:
+                    latest_ratios = ratio_df[ratio_columns].iloc[-1]
+                    sample_ratios = latest_ratios.head(3).items()
+                    
+                    for ratio_name, ratio_value in sample_ratios:
+                        print(f"   📊 {ratio_name}: {ratio_value}")
+                    
+                    # Create ratio chunk
+                    ratio_summary = ", ".join([f"{k}: {v}" for k, v in sample_ratios])
+                    ratio_chunk = {
+                        "content": f"{ticker} Financial Ratios: {ratio_summary}. These ratios indicate the company's operational efficiency and financial health.",
+                        "metadata": {
+                            "ticker": ticker,
+                            "source": "financial_ratios",
+                            "ratio_count": len(ratio_columns),
+                            "date": datetime.now().isoformat()
+                        }
+                    }
+                    ratio_chunk["source"] = "financial_statements"
+                    self.all_chunks.append(ratio_chunk)
+                
+            else:
+                print(f"⚠️  No ratio data available for {ticker}")
+            
+            # Step 4: Test LTM (Last Twelve Months) calculations
+            print(f"\n📅 Testing LTM calculations...")
+            ltm_df = get_company_ltm_only(ticker=ticker)
+            
+            if ltm_df is not None and not ltm_df.empty:
+                print(f"✅ Retrieved LTM metrics")
+                print(f"   📄 LTM records: {len(ltm_df)}")
+                
+                # Show key LTM metrics from latest period
+                if len(ltm_df) > 0:
+                    latest_ltm = ltm_df.iloc[-1]
+                    
+                    # Look for common LTM revenue and income fields
+                    ltm_revenue = latest_ltm.get("revenue", latest_ltm.get("total_revenue", "N/A"))
+                    ltm_net_income = latest_ltm.get("net_income", latest_ltm.get("net_income_loss", "N/A"))
+                    
+                    print(f"   💰 LTM Revenue: ${ltm_revenue}")
+                    print(f"   💰 LTM Net Income: ${ltm_net_income}")
+                    
+                    # Create LTM chunk
+                    ltm_chunk = {
+                        "content": f"{ticker} Last Twelve Months: Revenue ${ltm_revenue}, Net Income ${ltm_net_income}. LTM metrics provide current trailing performance view.",
+                        "metadata": {
+                            "ticker": ticker,
+                            "source": "ltm_financials",
+                            "ltm_revenue": str(ltm_revenue),
+                            "ltm_net_income": str(ltm_net_income),
+                            "date": datetime.now().isoformat()
+                        }
+                    }
+                    ltm_chunk["source"] = "financial_statements"
+                    self.all_chunks.append(ltm_chunk)
+                
+            else:
+                print(f"⚠️  No LTM data available for {ticker}")
+            
+            self.results["SECFinancialRAG"] = True
+            return True
+            
+        except Exception as e:
+            error_str = str(e)
+            print(f"❌ SECFinancialRAG test failed: {e}")
+            
+            if "psycopg2" in error_str or "database" in error_str.lower():
+                print("   💡 Tip: Install PostgreSQL dependencies: pip install psycopg2-binary")
+                print("   💡 Tip: Ensure PostgreSQL database is running and configured")
+            elif "sec" in error_str.lower():
+                print("   💡 Tip: Check SEC API connectivity and rate limits")
+            
+            # Create mock financial data for testing
+            mock_chunk = {
+                "content": f"Mock financial analysis: {ticker} demonstrates strong financial performance with healthy revenue growth, profitability ratios, and solid balance sheet metrics.",
+                "metadata": {"ticker": ticker, "source": "financial_statements", "type": "mock_comprehensive"}
+            }
+            mock_chunk["source"] = "financial_statements"
+            self.all_chunks.append(mock_chunk)
+            print("   📄 Created mock financial data for testing")
+            
+            self.results["SECFinancialRAG"] = False
             return False
 
     def test_news_rag(self, ticker=DEMO_TICKER):
@@ -814,6 +992,7 @@ def main():
     
     demo.test_annual_report_rag()
     demo.test_share_price_rag()
+    demo.test_sec_financial_rag()
     demo.test_news_rag()
     demo.test_transcript_rag()
     

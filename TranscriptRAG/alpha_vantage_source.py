@@ -13,10 +13,16 @@ import re
 import json
 from dataclasses import asdict
 
-from .data_source_interface import (
-    TranscriptDataSource, TranscriptData, TranscriptQuery, 
-    DataSourceError, transcript_registry
-)
+try:
+    from .data_source_interface import (
+        TranscriptDataSource, TranscriptData, TranscriptQuery, 
+        DataSourceError, transcript_registry
+    )
+except ImportError:
+    from data_source_interface import (
+        TranscriptDataSource, TranscriptData, TranscriptQuery, 
+        DataSourceError, transcript_registry
+    )
 
 
 class AlphaVantageTranscriptSource(TranscriptDataSource):
@@ -51,6 +57,9 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
         self.logger = logging.getLogger(f'alpha_vantage_{id(self)}')
         if not self.logger.handlers:
             handler = logging.StreamHandler()
+            # Ensure UTF-8 encoding for Unicode support on Windows
+            if hasattr(handler, 'setEncoding'):
+                handler.setEncoding('utf-8')
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
@@ -281,8 +290,10 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
         
         # Calculate date range for quarter generation
         end_date = query.end_date or datetime.now()
-        if query.years_back:
-            start_date = end_date - timedelta(days=365 * query.years_back)
+        if query.quarters_back:
+            # Calculate start date based on quarters (roughly 3 months per quarter)
+            months_back = query.quarters_back * 3
+            start_date = end_date - timedelta(days=months_back * 30)
         else:
             start_date = query.start_date or self.earliest_date
         
@@ -312,10 +323,10 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
                 if transcript:
                     transcripts.append(transcript)
                     successful_transcripts += 1
-                    self.logger.info(f"✓ Successfully retrieved transcript for {quarter}")
+                    self.logger.info(f"Successfully retrieved transcript for {quarter}")
                     print(f"      ✅ Success: Found transcript for {quarter}")
                 else:
-                    self.logger.info(f"✗ No transcript data found for {quarter}")
+                    self.logger.info(f"No transcript data found for {quarter}")
                     print(f"      ❌ No data: No transcript found for {quarter}")
                 
                 # Apply limit during fetching to avoid unnecessary API calls
@@ -327,7 +338,7 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
             except DataSourceError as e:
                 # Handle different types of errors
                 if e.error_code == "API_ERROR":
-                    self.logger.warning(f"✗ API error for {quarter}: {e}")
+                    self.logger.warning(f"API error for {quarter}: {e}")
                     print(f"      ⚠️ API Error for {quarter}: {e}")
                     continue
                 elif e.error_code == "DAILY_RATE_LIMIT":
@@ -358,6 +369,47 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
         
         return transcripts
     
+    def _get_fiscal_info(self, ticker: str) -> Dict[str, str]:
+        """
+        Get fiscal year end and latest quarter info from Alpha Vantage OVERVIEW API
+        
+        Args:
+            ticker: Company ticker symbol
+            
+        Returns:
+            Dictionary with 'fiscal_year_end' and 'latest_quarter' keys
+        """
+        try:
+            params = {
+                'function': 'OVERVIEW',
+                'symbol': ticker.upper()
+            }
+            
+            data = self._make_request(params)
+            fiscal_year_end = data.get('FiscalYearEnd', 'December')
+            latest_quarter = data.get('LatestQuarter', '')
+            
+            # Validate the month name
+            valid_months = [
+                'January', 'February', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November', 'December'
+            ]
+            
+            if fiscal_year_end not in valid_months:
+                fiscal_year_end = 'December'  # Default fallback
+            
+            return {
+                'fiscal_year_end': fiscal_year_end,
+                'latest_quarter': latest_quarter
+            }
+                
+        except DataSourceError:
+            # If we can't get fiscal info, default to calendar year
+            return {
+                'fiscal_year_end': 'December',
+                'latest_quarter': ''
+            }
+    
     def _get_fiscal_year_end(self, ticker: str) -> str:
         """
         Get the fiscal year end month for a company using Alpha Vantage OVERVIEW API
@@ -369,29 +421,7 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
             Fiscal year end month name (e.g., 'December', 'September')
             Default to 'December' if unable to retrieve
         """
-        try:
-            params = {
-                'function': 'OVERVIEW',
-                'symbol': ticker.upper()
-            }
-            
-            data = self._make_request(params)
-            fiscal_year_end = data.get('FiscalYearEnd', 'December')
-            
-            # Validate the month name
-            valid_months = [
-                'January', 'February', 'March', 'April', 'May', 'June',
-                'July', 'August', 'September', 'October', 'November', 'December'
-            ]
-            
-            if fiscal_year_end in valid_months:
-                return fiscal_year_end
-            else:
-                return 'December'  # Default fallback
-                
-        except DataSourceError:
-            # If we can't get fiscal year end, default to calendar year (December)
-            return 'December'
+        return self._get_fiscal_info(ticker)['fiscal_year_end']
     
     def _get_fiscal_quarter_start_months(self, fiscal_year_end_month: str) -> List[int]:
         """
@@ -447,6 +477,81 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
         
         return quarters
     
+    def _get_recent_quarters_sequence(self, ticker: str, quarters_back: int) -> List[str]:
+        """
+        Get the sequence of recent fiscal quarters using LatestQuarter from overview API
+        
+        Args:
+            ticker: Company ticker symbol
+            quarters_back: Number of quarters to go back
+            
+        Returns:
+            List of quarter strings in format ['2025Q4', '2025Q3', '2025Q2'] (most recent first)
+        """
+        try:
+            fiscal_info = self._get_fiscal_info(ticker)
+            latest_quarter_date = fiscal_info['latest_quarter']
+            
+            if not latest_quarter_date:
+                self.logger.warning(f"No LatestQuarter found for {ticker}, falling back to date-based calculation")
+                return self._generate_quarters_fallback(ticker, quarters_back)
+            
+            # Parse latest quarter date (format: YYYY-MM-DD, e.g., "2025-06-30")
+            try:
+                from datetime import datetime
+                latest_date = datetime.strptime(latest_quarter_date, '%Y-%m-%d')
+                self.logger.info(f"Latest quarter end date for {ticker}: {latest_quarter_date}")
+                print(f"📅 Latest quarter end: {latest_quarter_date}")
+            except ValueError:
+                self.logger.warning(f"Invalid LatestQuarter date format: {latest_quarter_date}")
+                return self._generate_quarters_fallback(ticker, quarters_back)
+            
+            # Determine which fiscal quarter this date represents
+            fiscal_year_end_month = fiscal_info['fiscal_year_end']
+            quarter_start_months = self._get_fiscal_quarter_start_months(fiscal_year_end_month)
+            
+            latest_fiscal_year, latest_fiscal_quarter = self._get_fiscal_year_and_quarter(latest_date, quarter_start_months)
+            
+            self.logger.info(f"Latest completed quarter: {latest_fiscal_year}Q{latest_fiscal_quarter}")
+            print(f"🎯 Latest completed quarter: {latest_fiscal_year}Q{latest_fiscal_quarter}")
+            
+            # Generate sequence going backwards from latest quarter
+            quarters = []
+            current_year = latest_fiscal_year
+            current_quarter = latest_fiscal_quarter
+            
+            for i in range(quarters_back):
+                quarters.append(f"{current_year}Q{current_quarter}")
+                
+                # Move to previous quarter
+                current_quarter -= 1
+                if current_quarter < 1:
+                    current_quarter = 4
+                    current_year -= 1
+            
+            self.logger.info(f"Generated quarter sequence for {ticker}: {quarters}")
+            print(f"📋 Quarter sequence: {quarters}")
+            
+            return quarters
+            
+        except Exception as e:
+            self.logger.error(f"Error generating recent quarters for {ticker}: {e}")
+            return self._generate_quarters_fallback(ticker, quarters_back)
+    
+    def _generate_quarters_fallback(self, ticker: str, quarters_back: int) -> List[str]:
+        """Fallback method for quarter generation when LatestQuarter is not available"""
+        current_date = datetime.now()
+        fiscal_year_end_month = self._get_fiscal_year_end(ticker)
+        quarter_start_months = self._get_fiscal_quarter_start_months(fiscal_year_end_month)
+        
+        quarters = []
+        for i in range(quarters_back):
+            fiscal_year, fiscal_quarter = self._get_fiscal_year_and_quarter(current_date, quarter_start_months)
+            quarters.append(f"{fiscal_year}Q{fiscal_quarter}")
+            current_date = self._get_previous_quarter_date(current_date, quarter_start_months)
+        
+        return quarters
+
     def _generate_quarters_in_range(self, start_date: datetime, end_date: datetime, ticker: str) -> List[str]:
         """
         Generate quarter strings (e.g., '2024Q1') within the date range based on company's fiscal year
@@ -767,12 +872,15 @@ def register_alpha_vantage_source(api_key: str = None, is_default: bool = True):
     return source
 
 
-# Load environment variables
+# Load environment variables from TranscriptRAG .env file
 try:
     from dotenv import load_dotenv
-    load_dotenv()
-    load_dotenv('../.env')  # Load from parent directory
+    from pathlib import Path
+    # Load .env file from TranscriptRAG directory
+    env_path = Path(__file__).parent / '.env'
+    load_dotenv(env_path)
 except ImportError:
+    # dotenv not available, will use system environment variables
     pass
 
 # Auto-register if API key is available

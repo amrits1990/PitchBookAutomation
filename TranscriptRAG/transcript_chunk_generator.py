@@ -70,6 +70,7 @@ class TranscriptChunkGenerator:
                     'chunk_created_at': timestamp,
                     'section_name': base_metadata.get('section_name', 'Unknown Section'),
                     'content_type': 'transcript',
+                    'speaker': chunk_speakers_info['primary_speaker'],  # Add speaker field for vector store
                     'chunk_speakers_info': chunk_speakers_info['speakers_info'],
                     'chunk_speakers_with_titles': chunk_speakers_info['speakers_with_titles'],
                     'primary_speaker': chunk_speakers_info['primary_speaker']
@@ -122,6 +123,7 @@ class TranscriptChunkGenerator:
                 'chunk_created_at': timestamp,
                 'section_name': base_metadata.get('section_name', 'Unknown Section'),
                 'content_type': 'transcript',
+                'speaker': chunk_speakers_info['primary_speaker'],  # Add speaker field for vector store
                 'chunk_speakers_info': chunk_speakers_info['speakers_info'],
                 'chunk_speakers_with_titles': chunk_speakers_info['speakers_with_titles'],
                 'primary_speaker': chunk_speakers_info['primary_speaker']
@@ -310,6 +312,7 @@ class TranscriptChunkGenerator:
                     'chunk_created_at': timestamp,
                     'section_name': base_metadata.get('section_name', 'Unknown Section'),
                     'content_type': 'transcript',
+                    'speaker': list(current_speakers)[0] if current_speakers else None,  # Primary speaker for vector store
                     'speakers': list(current_speakers)
                 })
                 
@@ -347,6 +350,7 @@ class TranscriptChunkGenerator:
                 'chunk_created_at': timestamp,
                 'section_name': base_metadata.get('section_name', 'Unknown Section'),
                 'content_type': 'transcript',
+                'speaker': list(current_speakers)[0] if current_speakers else None,  # Primary speaker for vector store
                 'speakers': list(current_speakers)
             })
             
@@ -356,6 +360,260 @@ class TranscriptChunkGenerator:
                 'length': len(current_chunk),
                 'metadata': chunk_metadata
             })
+        
+        return chunks
+    
+    def create_qa_grouped_chunks(self, section_text: str, section_metadata: Dict, 
+                                chunk_size: int = 1200, overlap: int = 0) -> List[Dict]:
+        """
+        Create Q&A chunks that group analyst questions with their answers
+        
+        Args:
+            section_text: Q&A section text content
+            section_metadata: Metadata about the Q&A section
+            chunk_size: Maximum size of each chunk (larger for Q&A to fit Q+A)
+            overlap: Overlap between consecutive chunks (0 for Q&A to avoid mixing)
+            
+        Returns:
+            List of chunk dictionaries with grouped Q&A pairs
+        """
+        if not section_text:
+            return []
+        
+        # Parse the section text to extract individual speaker segments
+        segments = self._extract_speaker_segments(section_text)
+        if not segments:
+            return []
+        
+        # Group segments into Q&A pairs
+        qa_groups = self._group_qa_segments(segments)
+        
+        chunks = []
+        base_metadata = section_metadata.copy()
+        timestamp = datetime.now().isoformat()
+        
+        for i, qa_group in enumerate(qa_groups):
+            # Combine all segments in this Q&A group
+            group_text_parts = []
+            group_speakers = set()
+            primary_speaker = None  # Will be the person answering (management)
+            analyst_speaker = None  # Track the analyst who asked
+            
+            for j, segment in enumerate(qa_group):
+                speaker = segment['speaker']
+                content = segment['content']
+                title = segment.get('title', '')
+                group_speakers.add(speaker)
+                group_text_parts.append(f"{speaker}: {content}")
+                
+                if j == 0:
+                    # First segment is always the analyst asking
+                    analyst_speaker = speaker
+                elif primary_speaker is None and 'analyst' not in title.lower():
+                    # First non-analyst speaker becomes primary (the answerer)
+                    primary_speaker = speaker
+            
+            # If no management response found, fall back to analyst
+            if primary_speaker is None:
+                primary_speaker = analyst_speaker
+            
+            group_text = '\n'.join(group_text_parts)
+            
+            # Create chunk metadata
+            chunk_metadata = base_metadata.copy()
+            chunk_metadata.update({
+                'chunk_id': i,
+                'chunk_length': len(group_text),
+                'chunk_size_setting': chunk_size,
+                'overlap_setting': overlap,
+                'chunk_created_at': timestamp,
+                'section_name': base_metadata.get('section_name', 'Q&A Session'),
+                'content_type': 'qa_transcript',
+                'speaker': primary_speaker,  # Person answering the question (for search filtering)
+                'primary_speaker': primary_speaker,  # Management person answering
+                'analyst_speaker': analyst_speaker,  # Analyst who asked the question
+                'speakers': list(group_speakers),
+                'qa_group': True,
+                'qa_pair_count': len(qa_group)
+            })
+            
+            chunks.append({
+                'chunk_id': i,
+                'text': group_text,
+                'length': len(group_text),
+                'metadata': chunk_metadata
+            })
+        
+        return chunks
+    
+    def _group_qa_segments(self, segments: List[Dict[str, str]]) -> List[List[Dict[str, str]]]:
+        """
+        Group segments into Q&A pairs: analyst question + all responses until next analyst
+        
+        Args:
+            segments: List of speaker segments from Q&A section
+            
+        Returns:
+            List of groups, where each group is [analyst_question, response1, response2, ...]
+        """
+        if not segments:
+            return []
+        
+        qa_groups = []
+        current_group = []
+        
+        for segment in segments:
+            speaker = segment['speaker']
+            title = segment.get('title', '')
+            
+            # Check if this is an analyst (new question starts)
+            if 'analyst' in title.lower():
+                # Save previous group if it exists
+                if current_group:
+                    qa_groups.append(current_group)
+                
+                # Start new group with analyst question
+                current_group = [segment]
+            else:
+                # Add response to current group
+                if current_group:
+                    current_group.append(segment)
+                else:
+                    # Edge case: response without preceding analyst question
+                    current_group = [segment]
+        
+        # Add final group
+        if current_group:
+            qa_groups.append(current_group)
+        
+        return qa_groups
+    
+    def create_opening_remarks_chunks(self, section_text: str, section_metadata: Dict, 
+                                    chunk_size: int = 800) -> List[Dict]:
+        """
+        Create opening remarks chunks with no overlap between JSON entries
+        Each original JSON entry becomes a separate chunk (or multiple if too large)
+        
+        Args:
+            section_text: Opening remarks section text content
+            section_metadata: Metadata about the opening remarks section
+            chunk_size: Maximum size of each chunk
+            
+        Returns:
+            List of chunk dictionaries without overlap
+        """
+        if not section_text:
+            return []
+        
+        # Extract individual speaker segments (each represents an original JSON entry)
+        segments = self._extract_speaker_segments(section_text)
+        if not segments:
+            return []
+        
+        chunks = []
+        base_metadata = section_metadata.copy()
+        timestamp = datetime.now().isoformat()
+        chunk_id = 0
+        
+        for segment in segments:
+            speaker = segment['speaker']
+            content = segment['content']
+            segment_text = f"{speaker}: {content}"
+            
+            # If segment is small enough, create single chunk
+            if len(segment_text) <= chunk_size:
+                chunk_metadata = base_metadata.copy()
+                chunk_metadata.update({
+                    'chunk_id': chunk_id,
+                    'chunk_length': len(segment_text),
+                    'chunk_size_setting': chunk_size,
+                    'overlap_setting': 0,  # No overlap for opening remarks
+                    'chunk_created_at': timestamp,
+                    'section_name': base_metadata.get('section_name', 'Opening Remarks'),
+                    'content_type': 'opening_remarks_transcript',
+                    'speaker': speaker,
+                    'speakers': [speaker],
+                    'json_entry_chunk': True  # Indicates this came from single JSON entry
+                })
+                
+                chunks.append({
+                    'chunk_id': chunk_id,
+                    'text': segment_text,
+                    'length': len(segment_text),
+                    'metadata': chunk_metadata
+                })
+                
+                chunk_id += 1
+            
+            else:
+                # Segment is too large - split it but maintain no overlap
+                # Split content by sentences
+                sentences = re.split(r'(?<=[.!?])\s+', content)
+                current_chunk_content = f"{speaker}: "
+                current_length = len(current_chunk_content)
+                
+                for sentence in sentences:
+                    sentence_length = len(sentence) + 1  # +1 for space
+                    
+                    if current_length + sentence_length <= chunk_size:
+                        current_chunk_content += sentence + " "
+                        current_length += sentence_length
+                    else:
+                        # Create chunk with current content
+                        if current_chunk_content.strip() != f"{speaker}:":
+                            chunk_metadata = base_metadata.copy()
+                            chunk_metadata.update({
+                                'chunk_id': chunk_id,
+                                'chunk_length': len(current_chunk_content.strip()),
+                                'chunk_size_setting': chunk_size,
+                                'overlap_setting': 0,
+                                'chunk_created_at': timestamp,
+                                'section_name': base_metadata.get('section_name', 'Opening Remarks'),
+                                'content_type': 'opening_remarks_transcript',
+                                'speaker': speaker,
+                                'speakers': [speaker],
+                                'json_entry_chunk': True,
+                                'split_from_large_entry': True
+                            })
+                            
+                            chunks.append({
+                                'chunk_id': chunk_id,
+                                'text': current_chunk_content.strip(),
+                                'length': len(current_chunk_content.strip()),
+                                'metadata': chunk_metadata
+                            })
+                            
+                            chunk_id += 1
+                        
+                        # Start new chunk
+                        current_chunk_content = f"{speaker}: {sentence} "
+                        current_length = len(current_chunk_content)
+                
+                # Add final chunk if there's remaining content
+                if current_chunk_content.strip() != f"{speaker}:":
+                    chunk_metadata = base_metadata.copy()
+                    chunk_metadata.update({
+                        'chunk_id': chunk_id,
+                        'chunk_length': len(current_chunk_content.strip()),
+                        'chunk_size_setting': chunk_size,
+                        'overlap_setting': 0,
+                        'chunk_created_at': timestamp,
+                        'section_name': base_metadata.get('section_name', 'Opening Remarks'),
+                        'content_type': 'opening_remarks_transcript',
+                        'speaker': speaker,
+                        'speakers': [speaker],
+                        'json_entry_chunk': True,
+                        'split_from_large_entry': True
+                    })
+                    
+                    chunks.append({
+                        'chunk_id': chunk_id,
+                        'text': current_chunk_content.strip(),
+                        'length': len(current_chunk_content.strip()),
+                        'metadata': chunk_metadata
+                    })
+                    
+                    chunk_id += 1
         
         return chunks
     
@@ -449,15 +707,41 @@ class TranscriptChunkGenerator:
             speaker_match = re.match(r'^([A-Za-z][A-Za-z\s\.]+?)(?:\s*\([^)]+\))?:\s*', first_line)
             if speaker_match:
                 speaker = speaker_match.group(1).strip()
-                title = available_speakers_titles.get(speaker, '')
-                
-                speakers_info.append({
-                    'speaker': speaker,
-                    'title': title,
-                    'full_name': f"{speaker} ({title})" if title else speaker
-                })
-                speakers_with_titles[speaker] = title
-                primary_speaker = speaker
+                # Skip generic terms that don't represent real speakers
+                if speaker.upper() not in ['UNKNOWN', 'UNIDENTIFIED', 'QUESTION', 'ANSWER', 'OPERATOR']:
+                    title = available_speakers_titles.get(speaker, '')
+                    
+                    speakers_info.append({
+                        'speaker': speaker,
+                        'title': title,
+                        'full_name': f"{speaker} ({title})" if title else speaker
+                    })
+                    speakers_with_titles[speaker] = title
+                    primary_speaker = speaker
+            else:
+                # Try additional patterns for common names
+                # Look for "Tim Cook:" or "Cook:" or similar patterns in chunk
+                name_patterns = [
+                    r'\b([A-Z][a-z]+\s+[A-Z][a-z]+):\s+',  # "Tim Cook: "
+                    r'\b([A-Z][a-z]+):\s+(?:Thank|I|We|Our)',  # "Cook: Thank"
+                ]
+                for pattern in name_patterns:
+                    matches = re.findall(pattern, chunk_text)
+                    for match in matches:
+                        speaker = match.strip()
+                        if len(speaker) > 1 and speaker.upper() not in ['UNKNOWN', 'UNIDENTIFIED']:
+                            title = available_speakers_titles.get(speaker, '')
+                            speakers_info.append({
+                                'speaker': speaker,
+                                'title': title,
+                                'full_name': f"{speaker} ({title})" if title else speaker
+                            })
+                            speakers_with_titles[speaker] = title
+                            if primary_speaker is None:
+                                primary_speaker = speaker
+                            break
+                    if primary_speaker is not None:
+                        break
         
         return {
             'speakers_info': speakers_info,
