@@ -111,6 +111,7 @@ class IncomeStatement(BaseFinancialStatement):
     general_and_administrative: Optional[Decimal] = Field(None, description="General and administrative expenses")
     total_operating_expenses: Optional[Decimal] = Field(None, description="Total operating expenses")
     operating_income: Optional[Decimal] = Field(None, description="Operating income")
+    ebitda: Optional[Decimal] = Field(None, description="Earnings before interest, taxes, depreciation, and amortization")
     
     # Non-Operating Items
     interest_income: Optional[Decimal] = Field(None, description="Interest income")
@@ -133,6 +134,7 @@ class BalanceSheet(BaseFinancialStatement):
     # Current Assets
     cash_and_cash_equivalents: Optional[Decimal] = Field(None, description="Cash and cash equivalents")
     short_term_investments: Optional[Decimal] = Field(None, description="Short-term investments")
+    cash_and_short_term_investments: Optional[Decimal] = Field(None, description="Combined cash and short-term investments")
     accounts_receivable: Optional[Decimal] = Field(None, description="Accounts receivable")
     inventory: Optional[Decimal] = Field(None, description="Inventory")
     prepaid_expenses: Optional[Decimal] = Field(None, description="Prepaid expenses")

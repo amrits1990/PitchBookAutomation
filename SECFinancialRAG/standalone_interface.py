@@ -50,18 +50,33 @@ def get_company_financial_data(ticker: str, auto_process: bool = True,
     logger.info(f"Getting comprehensive financial data for {ticker}")
     
     try:
-        # Step 1: Ensure company data exists
+        # Step 1: Check cache and ensure company data exists
+        should_process = True
         if auto_process:
-            logger.info(f"Auto-processing financial data for {ticker}")
-            process_result = process_company_financials(
-                ticker=ticker,
-                validate_data=True,
-                calculate_ratios=include_ratios
-            )
+            # Check if data is fresh (within last 24 hours)
+            with FinancialDatabase() as db:
+                if db.is_company_data_fresh(ticker, hours=24):
+                    logger.info(f"Using cached data for {ticker} (fresh within 24 hours)")
+                    should_process = False
+                else:
+                    logger.info(f"Data for {ticker} is stale, will refresh from SEC")
             
-            if process_result.get('status') != 'success':
-                logger.error(f"Failed to process {ticker}: {process_result.get('error_message')}")
-                return None
+            if should_process:
+                logger.info(f"Auto-processing financial data for {ticker}")
+                process_result = process_company_financials(
+                    ticker=ticker,
+                    validate_data=True,
+                    generate_ltm=True,        # ← ADD THIS: Always generate LTM data for caching
+                    calculate_ratios=include_ratios
+                )
+                
+                if process_result.get('status') != 'success':
+                    logger.error(f"Failed to process {ticker}: {process_result.get('error_message')}")
+                    return None
+                
+                # Update the company timestamp after successful processing
+                with FinancialDatabase() as db:
+                    db.update_company_timestamp(ticker)
         
         # Step 2: Initialize default ratios if needed
         if include_ratios:
@@ -112,7 +127,59 @@ def get_company_financial_data(ticker: str, auto_process: bool = True,
 
 
 def _get_all_ltm_data(ticker: str) -> List[Dict[str, Any]]:
-    """Get all LTM data for income statement and cash flow"""
+    """Get all LTM data for income statement and cash flow (24-hour cache aware)"""
+    ltm_records = []
+    
+    try:
+        with FinancialDatabase() as db:
+            # Check if company data is fresh (within 24 hours) AND LTM data exists
+            if db.is_company_data_fresh(ticker, hours=24):
+                # Get LTM income statement data from database
+                ltm_income_statements = db.get_ltm_income_statements(ticker)
+                ltm_cash_flows = db.get_ltm_cash_flow_statements(ticker)
+                
+                if ltm_income_statements or ltm_cash_flows:
+                    logger.info(f"Using cached LTM data for {ticker} (fresh within 24 hours)")
+                    
+                    # Process income statements
+                    for record in ltm_income_statements:
+                        # Convert database record to standard format
+                        record_dict = dict(record)
+                        record_dict['data_source'] = 'LTM'
+                        record_dict['statement_type'] = 'income_statement'
+                        record_dict['period_type'] = 'LTM'
+                        record_dict['period_end_date'] = record_dict.get('period_end_date')  # Use standardized field name
+                        record_dict['ticker'] = ticker
+                        ltm_records.append(record_dict)
+                    
+                    # Process cash flows
+                    for record in ltm_cash_flows:
+                        # Convert database record to standard format
+                        record_dict = dict(record)
+                        record_dict['data_source'] = 'LTM'
+                        record_dict['statement_type'] = 'cash_flow'
+                        record_dict['period_type'] = 'LTM'
+                        record_dict['period_end_date'] = record_dict.get('period_end_date')  # Use standardized field name
+                        record_dict['ticker'] = ticker
+                        ltm_records.append(record_dict)
+                    
+                    logger.debug(f"Retrieved {len(ltm_records)} cached LTM records for {ticker}")
+                    return ltm_records
+            
+            # Data is stale or no LTM data exists, calculate fresh LTM data
+            logger.info(f"Company data for {ticker} is stale or no LTM data exists, calculating fresh LTM data")
+            return _get_all_ltm_data_calculated(ticker)
+        
+    except Exception as e:
+        logger.error(f"Error getting LTM data from database for {ticker}: {e}")
+        # Fallback to calculation on database error
+        return _get_all_ltm_data_calculated(ticker)
+    
+    return ltm_records
+
+
+def _get_all_ltm_data_calculated(ticker: str) -> List[Dict[str, Any]]:
+    """Get all LTM data by calculation (fallback method)"""
     ltm_records = []
     
     try:
@@ -135,10 +202,10 @@ def _get_all_ltm_data(ticker: str) -> List[Dict[str, Any]]:
                 record['ticker'] = ticker
                 ltm_records.append(record)
                 
-        logger.debug(f"Retrieved {len(ltm_records)} LTM records for {ticker}")
+        logger.debug(f"Calculated {len(ltm_records)} LTM records for {ticker}")
         
     except Exception as e:
-        logger.error(f"Error getting LTM data for {ticker}: {e}")
+        logger.error(f"Error calculating LTM data for {ticker}: {e}")
     
     return ltm_records
 
@@ -167,16 +234,43 @@ def _get_balance_sheet_data(ticker: str, db: FinancialDatabase) -> List[Dict[str
 
 
 def _get_ratio_data(ticker: str, db: FinancialDatabase) -> List[Dict[str, Any]]:
-    """Get all calculated ratios"""
+    """Get all calculated ratios (24-hour cache aware)"""
     ratio_records = []
     
     try:
-        # Calculate fresh ratios
+        # Check if company data is fresh (within 24 hours) AND ratios exist
+        if db.is_company_data_fresh(ticker, hours=24):
+            existing_ratios = db.get_calculated_ratios(ticker)
+            if existing_ratios:
+                logger.info(f"Using cached ratio data for {ticker} (fresh within 24 hours)")
+                # Use existing cached data
+                for ratio in existing_ratios:
+                    # Convert to dictionary and add metadata
+                    ratio_dict = dict(ratio)
+                    ratio_dict['data_source'] = 'calculated'
+                    ratio_dict['statement_type'] = 'ratio'
+                    ratio_dict['ticker'] = ticker
+                    
+                    # Parse calculation inputs if JSON string
+                    if isinstance(ratio_dict.get('calculation_inputs'), str):
+                        try:
+                            import json
+                            ratio_dict['calculation_inputs'] = json.loads(ratio_dict['calculation_inputs'])
+                        except:
+                            pass
+                    
+                    ratio_records.append(ratio_dict)
+                
+                logger.debug(f"Retrieved {len(ratio_records)} cached ratio records for {ticker}")
+                return ratio_records
+        
+        # Data is stale or no ratios exist, calculate fresh ratios
+        logger.info(f"Company data for {ticker} is stale or no ratios exist, calculating fresh ratios")
         with SimpleRatioCalculator() as calc:
             ratio_result = calc.calculate_company_ratios(ticker)
             
             if ratio_result and not ratio_result.get('error'):
-                # Get stored ratios from database
+                # Get newly calculated ratios from database
                 ratios = db.get_calculated_ratios(ticker)
                 
                 for ratio in ratios:

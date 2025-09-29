@@ -22,6 +22,7 @@ try:
     from .sec_client import SECClient
     from .database import FinancialDatabase
     from .ltm_calculator import LTMCalculator
+    from .calculated_fields_processor import CalculatedFieldsProcessor
 except ImportError:
     # If relative imports fail (when run directly), use absolute imports
     from simplified_processor import SimplifiedSECFinancialProcessor
@@ -29,6 +30,7 @@ except ImportError:
     from sec_client import SECClient
     from database import FinancialDatabase
     from ltm_calculator import LTMCalculator
+    from calculated_fields_processor import CalculatedFieldsProcessor
 
 # Configure logging
 logging.basicConfig(
@@ -44,7 +46,8 @@ logger = logging.getLogger(__name__)
 
 
 def process_company_financials(ticker: str, validate_data: bool = True, filing_preference: str = 'latest', 
-                              generate_ltm: bool = False, calculate_ratios: bool = False) -> Dict[str, Any]:
+                              generate_ltm: bool = False, calculate_ratios: bool = False, 
+                              force_refresh: bool = False) -> Dict[str, Any]:
     """
     Process financial statements for a company by ticker
     
@@ -54,6 +57,7 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
         filing_preference: Which filing to use when multiple exist for same period ('original' or 'latest')
         generate_ltm: Whether to automatically generate LTM files after processing
         calculate_ratios: Whether to calculate financial ratios using LTM data
+        force_refresh: If True, overwrite existing database records with fresh SEC data
         
     Returns:
         Dictionary with processing results and summary
@@ -98,6 +102,31 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
                 'error_message': f'No financial statements generated for {ticker}',
                 'metadata': None
             }
+        
+        # Check if data needs refresh (automatic 24-hour cache expiry)
+        auto_refresh_triggered = False
+        if not force_refresh:
+            data_is_fresh = database.is_company_data_fresh(ticker, hours=24)
+            if not data_is_fresh:
+                force_refresh = True
+                auto_refresh_triggered = True
+                logger.info(f"Data for {ticker} is older than 24 hours - enabling force_refresh")
+            else:
+                logger.info(f"Using cached data for {ticker} (fresh within 24 hours)")
+        
+        # When auto-refresh is triggered, also enable LTM and ratio regeneration
+        if auto_refresh_triggered:
+            generate_ltm = True
+            calculate_ratios = True
+            logger.info(f"Auto-refresh triggered for {ticker} - enabling LTM generation and ratio calculation")
+            
+            # Clear all existing data (including LTM and ratio tables) before refresh
+            logger.info(f"Clearing existing data for {ticker} before refresh")
+            clear_success = database.force_refresh_company_data(ticker)
+            if clear_success:
+                logger.info(f"Successfully cleared existing data for {ticker}")
+            else:
+                logger.warning(f"Failed to clear existing data for {ticker} - continuing with refresh")
         
         # Store statements in database
         periods_processed = 0
@@ -170,12 +199,21 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
                         periods_skipped += 1
                         continue
                     
-                    result_id = database.insert_statement(statement_model)
-                    if result_id:
-                        periods_processed += 1
+                    if force_refresh:
+                        # Use upsert operation to update existing records or insert new ones
+                        result = database.upsert_statement(statement_model)
+                        if result == 'inserted' or result == 'updated':
+                            periods_processed += 1
+                        else:
+                            periods_skipped += 1
                     else:
-                        # Statement already exists (duplicate) - count as skipped but not an error
-                        periods_skipped += 1
+                        # Normal behavior: insert new records, skip duplicates
+                        result_id = database.insert_statement(statement_model)
+                        if result_id:
+                            periods_processed += 1
+                        else:
+                            # Statement already exists (duplicate) - count as skipped but not an error
+                            periods_skipped += 1
                         
                 except Exception as e:
                     logger.error(f"Error inserting statement: {e}")
@@ -248,19 +286,71 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
                 logger.warning(f"Validation failed for {ticker}: {e}")
                 validation_results = {'error': str(e)}
         
-        # Generate LTM files if requested - works regardless of periods_processed count
-        ltm_export_results = None
+        # Clean duplicate period_end_date entries if processing was successful
+        cleanup_results = None
+        if metadata.processing_status == "success":
+            try:
+                logger.info(f"Cleaning duplicate period entries for {ticker}")
+                cleanup_results = cleanup_duplicate_period_entries(ticker)
+                if cleanup_results:
+                    logger.info(f"Cleanup completed for {ticker}: {cleanup_results}")
+                else:
+                    logger.debug(f"No cleanup needed for {ticker}")
+            except Exception as e:
+                logger.error(f"Error during cleanup for {ticker}: {e}")
+                cleanup_results = {'error': str(e)}
+        
+        # Process calculated fields if processing was successful
+        calculated_fields_results = None
+        if metadata.processing_status == "success":
+            try:
+                logger.info(f"Processing calculated fields for {ticker}")
+                calc_processor = CalculatedFieldsProcessor()
+                calculated_fields_results = calc_processor.process_calculated_fields_for_company(ticker)
+                calc_processor.close()
+                
+                if calculated_fields_results and calculated_fields_results.get('total_fields_calculated', 0) > 0:
+                    logger.info(f"Calculated fields completed for {ticker}: {calculated_fields_results['total_fields_calculated']} fields calculated")
+                else:
+                    logger.debug(f"No calculated fields needed for {ticker}")
+            except Exception as e:
+                logger.error(f"Error during calculated fields processing for {ticker}: {e}")
+                calculated_fields_results = {'error': str(e)}
+        
+        # Process EBITDA post-calculations if processing was successful
+        ebitda_results = None
+        if metadata.processing_status == "success":
+            try:
+                logger.info(f"Processing EBITDA post-calculations for {ticker}")
+                try:
+                    from .ebitda_post_processor import run_ebitda_post_processing
+                except ImportError:
+                    from ebitda_post_processor import run_ebitda_post_processing
+                
+                ebitda_success = run_ebitda_post_processing(ticker, force_recalculate=force_refresh)
+                ebitda_results = {'success': ebitda_success}
+                
+                if ebitda_success:
+                    logger.info(f"EBITDA post-processing completed successfully for {ticker}")
+                else:
+                    logger.warning(f"EBITDA post-processing had issues for {ticker}")
+            except Exception as e:
+                logger.error(f"Error during EBITDA post-processing for {ticker}: {e}")
+                ebitda_results = {'error': str(e)}
+        
+        # Store LTM data in database if requested - works regardless of periods_processed count
+        ltm_storage_results = None
         if generate_ltm and metadata.processing_status == "success":
             try:
-                logger.info(f"Generating LTM files for {ticker} (periods_processed={metadata.periods_processed}, periods_skipped={metadata.periods_skipped})")
-                ltm_export_results = export_ltm_data(ticker, output_dir='ltm_exports')
-                if any(ltm_export_results.values()):
-                    logger.info(f"Successfully generated LTM files for {ticker}: {ltm_export_results}")
+                logger.info(f"Storing LTM data in database for {ticker} (periods_processed={metadata.periods_processed}, periods_skipped={metadata.periods_skipped})")
+                ltm_storage_results = store_ltm_data_in_database(ticker)
+                if any(ltm_storage_results.values()):
+                    logger.info(f"Successfully stored LTM data for {ticker}: {ltm_storage_results}")
                 else:
-                    logger.warning(f"Failed to generate LTM files for {ticker}: {ltm_export_results}")
+                    logger.warning(f"Failed to store LTM data for {ticker}: {ltm_storage_results}")
             except Exception as e:
-                logger.error(f"Error generating LTM files for {ticker}: {e}")
-                ltm_export_results = {'error': str(e)}
+                logger.error(f"Error storing LTM data for {ticker}: {e}")
+                ltm_storage_results = {'error': str(e)}
         elif generate_ltm:
             logger.warning(f"LTM generation skipped for {ticker} - processing_status: {metadata.processing_status}")
         else:
@@ -271,7 +361,11 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
         if calculate_ratios and metadata.processing_status == "success":
             try:
                 logger.info(f"Calculating financial ratios for {ticker}")
-                from .simple_ratio_calculator import calculate_ratios_simple as calculate_ratios_for_company
+                try:
+                    from .simple_ratio_calculator import calculate_ratios_simple as calculate_ratios_for_company
+                except ImportError:
+                    # Fallback for when run directly
+                    from simple_ratio_calculator import calculate_ratios_simple as calculate_ratios_for_company
                 ratio_results = calculate_ratios_for_company(ticker)
                 if ratio_results and 'ratios' in ratio_results:
                     logger.info(f"Successfully calculated {ratio_results.get('total_ratios', 0)} ratios for {ticker}")
@@ -300,7 +394,10 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
                 'fiscal_years': None   # Will be populated from validation if available
             },
             'validation': validation_results,
-            'ltm_export': ltm_export_results,
+            'cleanup': cleanup_results,
+            'calculated_fields': calculated_fields_results,
+            'ebitda_post_processing': ebitda_results,
+            'ltm_storage': ltm_storage_results,
             'ratios': ratio_results
         }
         
@@ -324,7 +421,8 @@ def process_company_financials(ticker: str, validate_data: bool = True, filing_p
             'periods_processed': 0,
             'periods_skipped': 0,
             'summary': None,
-            'validation': None
+            'validation': None,
+            'calculated_fields': None
         }
 
 
@@ -424,47 +522,38 @@ def calculate_company_ltm(ticker: str, statement_types: List[str] = ['income_sta
         }
 
 
-def export_ltm_data(ticker: str, output_prefix: str = None, 
-                   statement_types: List[str] = ['income_statement', 'cash_flow'],
-                   output_dir: str = None) -> Dict[str, bool]:
+def store_ltm_data_in_database(ticker: str, 
+                              statement_types: List[str] = ['income_statement', 'cash_flow']) -> Dict[str, bool]:
     """
-    Export LTM and FY data to CSV files
+    Store calculated LTM data in database tables
     
     Args:
         ticker: Company ticker symbol
-        output_prefix: Prefix for output files (default: ticker_ltm_)
-        statement_types: List of statement types to export
-        output_dir: Output directory (optional, will be created if specified)
+        statement_types: List of statement types to store LTM data for
         
     Returns:
-        Dictionary with export success status for each statement type
+        Dictionary with storage success status for each statement type
     """
-    logger.info(f"Exporting LTM data for {ticker}")
-    
-    # Handle output directory
-    if output_dir:
-        import os
-        os.makedirs(output_dir, exist_ok=True)
-        if output_prefix is None:
-            output_prefix = f"{output_dir}/{ticker}_ltm_"
-        elif not output_prefix.startswith(output_dir):
-            output_prefix = f"{output_dir}/{output_prefix}"
-    elif output_prefix is None:
-        output_prefix = f"{ticker}_ltm_"
+    logger.info(f"Storing LTM data in database for {ticker}")
     
     results = {}
     
     try:
         with LTMCalculator() as calculator:
             for statement_type in statement_types:
-                output_file = f"{output_prefix}{statement_type}.csv"  # Back to CSV
-                success = calculator.export_ltm_data(ticker, output_file, statement_type)
-                results[statement_type] = success
                 
-                if success:
-                    logger.info(f"Successfully exported {ticker} {statement_type} LTM and FY data to {output_file}")
+                # 1. Store LTM data in database (new future state)
+                db_result = calculator.store_ltm_data_in_database(ticker, statement_type)
+                db_success = db_result.get('success', False)
+                
+                
+                if db_success:
+                    logger.info(f"LTM DB SUCCESS: {ticker} {statement_type} - {db_result['inserted']} inserted, {db_result['skipped']} skipped")
                 else:
-                    logger.warning(f"Failed to export {ticker} {statement_type} LTM and FY data")
+                    logger.error(f"LTM DB FAILED: {ticker} {statement_type} - {db_result.get('error', 'Unknown error')}")
+                
+                # Success is based on database storage only
+                results[statement_type] = db_success
         
         return results
         
@@ -838,3 +927,265 @@ def export_ratio_data(ticker: str, output_file: str, format: str = 'csv') -> boo
     except Exception as e:
         logger.error(f"Error exporting ratio data for {ticker}: {e}")
         return False
+
+
+# Agent Interface Functions (New)
+def get_financial_metrics_for_agent(ticker: str, metrics: List[str], period: str = 'LTM'):
+    """
+    Agent-friendly function to get specific financial metrics
+    
+    Args:
+        ticker: Company ticker symbol
+        metrics: List of metric names
+        period: Period type ('LTM', 'Q1', 'Q2', 'Q3', 'Q4', 'FY', 'latest')
+        
+    Returns:
+        FinancialAgentResponse with JSON-serializable data
+    """
+    try:
+        from .agent_interface import get_financial_metrics_for_agent as agent_func
+        return agent_func(ticker, metrics, period)
+    except ImportError:
+        from agent_interface import get_financial_metrics_for_agent as agent_func
+        return agent_func(ticker, metrics, period)
+
+def get_ratios_for_agent(ticker: str, categories: List[str] = None, period: str = 'LTM'):
+    """
+    Agent-friendly function to get calculated ratios with category filtering
+    
+    Args:
+        ticker: Company ticker symbol
+        categories: List of ratio categories (['profitability', 'liquidity', etc.]) or None for all
+        period: Period type ('LTM', 'Q1', 'Q2', 'Q3', 'Q4', 'FY', 'latest')
+        
+    Returns:
+        FinancialAgentResponse with JSON-serializable ratio data organized by category
+    """
+    try:
+        from .agent_interface import get_ratios_for_agent as agent_func
+        return agent_func(ticker, categories, period)
+    except ImportError:
+        from agent_interface import get_ratios_for_agent as agent_func
+        return agent_func(ticker, categories, period)
+
+def get_ratio_definition_for_agent(ratio_name: str, ticker: str = None):
+    """
+    Agent-friendly function to get ratio definition with formula and interpretation
+    
+    Args:
+        ratio_name: Name of the ratio (e.g., 'ROE', 'Current_Ratio')
+        ticker: Optional company ticker for company-specific ratios
+        
+    Returns:
+        FinancialAgentResponse with ratio definition, formula, interpretation, and guidance
+    """
+    try:
+        from .agent_interface import get_ratio_definition_for_agent as agent_func
+        return agent_func(ratio_name, ticker)
+    except ImportError:
+        from agent_interface import get_ratio_definition_for_agent as agent_func
+        return agent_func(ratio_name, ticker)
+
+def compare_companies_for_agent(tickers: List[str], metrics: List[str], period: str = 'LTM'):
+    """
+    Agent-friendly function to compare financial metrics across multiple companies
+    
+    Args:
+        tickers: List of company ticker symbols (e.g., ['AAPL', 'MSFT', 'GOOGL'])
+        metrics: List of financial metrics to compare (e.g., ['total_revenue', 'net_income'])
+        period: Period type ('LTM', 'Q1', 'Q2', 'Q3', 'Q4', 'FY', 'latest')
+        
+    Returns:
+        FinancialAgentResponse with comparative analysis including rankings and statistics
+    """
+    try:
+        from .agent_interface import compare_companies_for_agent as agent_func
+        return agent_func(tickers, metrics, period)
+    except ImportError:
+        from agent_interface import compare_companies_for_agent as agent_func
+        return agent_func(tickers, metrics, period)
+
+
+def cleanup_duplicate_period_entries(ticker: str) -> Dict[str, Any]:
+    """
+    Clean duplicate period_end_date entries in income_statement and cash_flow_statement tables.
+    For each period_end_date, keep only the row with the highest number of non-null values.
+    
+    Args:
+        ticker: Company ticker symbol
+        
+    Returns:
+        Dictionary with cleanup results and statistics
+    """
+    logger.info(f"Starting cleanup of duplicate period entries for {ticker}")
+    
+    try:
+        with FinancialDatabase() as db:
+            # Get company info
+            company_info = db.get_company_by_ticker(ticker)
+            if not company_info:
+                logger.warning(f"Company {ticker} not found for cleanup")
+                return {'status': 'skipped', 'reason': 'Company not found'}
+            
+            cik = company_info['cik']
+            
+            cleanup_results = {
+                'status': 'success',
+                'income_statement_cleanup': {},
+                'cash_flow_cleanup': {},
+                'total_deleted': 0
+            }
+            
+            # Clean income_statements table
+            income_cleanup = _cleanup_table_duplicates(db, 'income_statements', cik, ticker)
+            cleanup_results['income_statement_cleanup'] = income_cleanup
+            cleanup_results['total_deleted'] += income_cleanup.get('deleted_count', 0)
+            
+            # Clean cash_flow_statements table
+            cash_flow_cleanup = _cleanup_table_duplicates(db, 'cash_flow_statements', cik, ticker)
+            cleanup_results['cash_flow_cleanup'] = cash_flow_cleanup
+            cleanup_results['total_deleted'] += cash_flow_cleanup.get('deleted_count', 0)
+            
+            logger.info(f"Cleanup completed for {ticker}: {cleanup_results['total_deleted']} total rows deleted")
+            return cleanup_results
+            
+    except Exception as e:
+        logger.error(f"Error during cleanup for {ticker}: {e}")
+        return {'status': 'error', 'error': str(e), 'total_deleted': 0}
+
+
+def _cleanup_table_duplicates(db: FinancialDatabase, table_name: str, cik: str, ticker: str) -> Dict[str, Any]:
+    """
+    Clean duplicate period_end_date entries in a specific table.
+    
+    Args:
+        db: Database connection
+        table_name: Name of the table to clean ('income_statements' or 'cash_flow_statements')
+        cik: Company CIK
+        ticker: Company ticker
+        
+    Returns:
+        Dictionary with cleanup results for this table
+    """
+    logger.info(f"Cleaning duplicates in {table_name} for {ticker}")
+    
+    try:
+        with db.connection.cursor() as cursor:
+            # Step 1: Find period_end_dates with multiple entries
+            cursor.execute(f"""
+                SELECT period_end_date, COUNT(*) as entry_count
+                FROM {table_name}
+                WHERE cik = %s
+                GROUP BY period_end_date
+                HAVING COUNT(*) > 1
+                ORDER BY period_end_date DESC
+            """, (cik,))
+            
+            duplicate_periods = cursor.fetchall()
+            
+            if not duplicate_periods:
+                logger.debug(f"No duplicates found in {table_name} for {ticker}")
+                return {
+                    'duplicate_periods_found': 0,
+                    'deleted_count': 0,
+                    'kept_count': 0,
+                    'details': []
+                }
+            
+            logger.info(f"Found {len(duplicate_periods)} period_end_dates with duplicates in {table_name} for {ticker}")
+            
+            total_deleted = 0
+            total_kept = 0
+            cleanup_details = []
+            
+            # Step 2: For each duplicate period, find the row with most non-null values
+            for period_end_date, entry_count in duplicate_periods:
+                logger.debug(f"Processing duplicates for {ticker} {table_name} period {period_end_date} ({entry_count} entries)")
+                
+                # Get all rows for this period_end_date
+                cursor.execute(f"""
+                    SELECT id, *
+                    FROM {table_name}
+                    WHERE cik = %s AND period_end_date = %s
+                    ORDER BY created_at DESC
+                """, (cik, period_end_date))
+                
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+                
+                if len(rows) <= 1:
+                    continue
+                
+                # Step 3: Calculate non-null count for each row
+                row_scores = []
+                for row in rows:
+                    row_dict = dict(zip(columns, row))
+                    
+                    # Count non-null financial values (exclude metadata columns)
+                    financial_columns = [col for col in columns if col not in [
+                        'id', 'company_id', 'cik', 'ticker', 'company_name',
+                        'created_at', 'updated_at', 'period_end_date', 'period_start_date',
+                        'filing_date', 'period_type', 'form_type', 'fiscal_year', 'period_length_months'
+                    ]]
+                    
+                    non_null_count = sum(1 for col in financial_columns 
+                                       if row_dict.get(col) is not None and row_dict.get(col) != 0)
+                    
+                    row_scores.append({
+                        'id': row_dict['id'],
+                        'non_null_count': non_null_count,
+                        'period_type': row_dict.get('period_type'),
+                        'period_length_months': row_dict.get('period_length_months'),
+                        'filing_date': row_dict.get('filing_date'),
+                        'created_at': row_dict.get('created_at'),
+                        'has_start_date': 1 if row_dict.get('period_start_date') is not None else 0
+                    })
+                
+                # Step 4: Sort with start_date prioritization
+                # Priority: 1) Has start_date (proper quarterly data), 2) Non-null count, 3) Creation date
+                def sort_key(x):
+                    return (x['has_start_date'], x['non_null_count'], x['created_at'])
+                
+                row_scores.sort(key=sort_key, reverse=True)
+                
+                # Keep the best row, delete the rest
+                best_row = row_scores[0]
+                rows_to_delete = row_scores[1:]
+                
+                logger.debug(f"For {ticker} {table_name} {period_end_date}: keeping row with {best_row['non_null_count']} non-null values (has_start_date: {best_row['has_start_date']}), deleting {len(rows_to_delete)} rows")
+                
+                # Step 5: Delete the inferior rows
+                for row_to_delete in rows_to_delete:
+                    cursor.execute(f"""
+                        DELETE FROM {table_name}
+                        WHERE id = %s
+                    """, (row_to_delete['id'],))
+                    total_deleted += 1
+                
+                total_kept += 1
+                
+                cleanup_details.append({
+                    'period_end_date': str(period_end_date),
+                    'entries_found': entry_count,
+                    'entries_deleted': len(rows_to_delete),
+                    'kept_entry_non_null_count': best_row['non_null_count'],
+                    'kept_entry_period_type': best_row['period_type']
+                })
+            
+            # Commit the changes
+            db.connection.commit()
+            
+            result = {
+                'duplicate_periods_found': len(duplicate_periods),
+                'deleted_count': total_deleted,
+                'kept_count': total_kept,
+                'details': cleanup_details
+            }
+            
+            logger.info(f"Completed cleanup of {table_name} for {ticker}: {total_deleted} deleted, {total_kept} kept")
+            return result
+            
+    except Exception as e:
+        db.connection.rollback()
+        logger.error(f"Error cleaning {table_name} for {ticker}: {e}")
+        raise

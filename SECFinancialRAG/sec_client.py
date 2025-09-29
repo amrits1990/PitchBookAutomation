@@ -52,97 +52,264 @@ class SECClient:
     
     def get_cik_from_ticker(self, ticker: str) -> Optional[str]:
         """
-        Get CIK (Central Index Key) from ticker symbol
+        Fetches the CIK (Central Index Key) for a given stock ticker
+        using the SEC's public mapping file.
         
         Args:
-            ticker: Company ticker symbol (e.g., 'AAPL')
-            
+            ticker (str): Stock ticker symbol (case-insensitive)
+        
         Returns:
-            CIK string with leading zeros (e.g., '0000320193') or None if not found
+            str: 10-digit zero-padded CIK or None if not found
         """
-        # Known major companies mapping for demo purposes
-        # In production, you'd want to maintain a more comprehensive mapping
-        known_ciks = {
-            'AAPL': '0000320193',
-            'MSFT': '0000789019', 
-            'GOOGL': '0001652044',
-            'GOOG': '0001652044',
-            'AMZN': '0001018724',
-            'TSLA': '0001318605',
-            'META': '0001326801',
-            'FB': '0001326801',
-            'NVDA': '0001045810',
-            'BRK.A': '0001067983',
-            'BRK.B': '0001067983',
-            'JNJ': '0000200406',
-            'V': '0001403161',
-            'PG': '0000080424',
-            'JPM': '0000019617',
-            'UNH': '0000731766',
-            'MA': '0001141391',
-            'HD': '0000354950',
-            'CVX': '0000093410',
-            'LLY': '0000059478',
-            'ABBV': '0001551152',
-            'PFE': '0000078003',
-            'KO': '0000021344',
-            'AVGO': '0001730168',
-            'PEP': '0000077476',
-            'TMO': '0000097745',
-            'COST': '0000909832',
-            'DIS': '0001744489',
-            'ABT': '0000001800',
-            'ACN': '0001467373',
-            'WMT': '0000104169'
-        }
+        url = "https://www.sec.gov/files/company_tickers.json"
+        headers = {"User-Agent": "my-app (your_email@example.com)"}
+
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+
+        data = response.json()
+        ticker = ticker.upper().strip()
+
+        for item in data.values():
+            if item["ticker"] == ticker:
+                cik_int = int(item["cik_str"])
+                return str(cik_int).zfill(10)  # zero-pad to 10 digits
+
+        return None
+    
+    def _lookup_cik_from_company_tickers(self, ticker: str) -> Optional[str]:
+        """
+        Look up CIK using SEC's company tickers API endpoints
+        This method tries multiple SEC endpoints to find the CIK
+        """
+        # Try multiple possible endpoints for company tickers
+        endpoints_to_try = [
+            "https://www.sec.gov/files/company_tickers.json",
+            "https://data.sec.gov/api/xbrl/companyfacts/company_tickers.json",
+            "https://www.sec.gov/Archives/edgar/cik-lookup-data.txt",
+        ]
         
-        ticker_upper = ticker.upper()
+        for endpoint in endpoints_to_try:
+            try:
+                self._rate_limit()
+                logger.info(f"Trying endpoint: {endpoint}")
+                
+                if endpoint.endswith('.json'):
+                    cik = self._search_json_endpoint(endpoint, ticker)
+                    if cik:
+                        return cik
+                elif endpoint.endswith('.txt'):
+                    cik = self._search_text_endpoint(endpoint, ticker)
+                    if cik:
+                        return cik
+                        
+            except Exception as e:
+                logger.debug(f"Endpoint {endpoint} failed: {e}")
+                continue
         
-        # Check known mapping first
-        if ticker_upper in known_ciks:
-            logger.info(f"Found CIK for {ticker} in known mappings: {known_ciks[ticker_upper]}")
-            return known_ciks[ticker_upper]
-        
-        # If not in known mappings, try SEC API lookup
-        self._rate_limit()
-        
+        # If all endpoints fail, try a manual search approach
+        return self._manual_cik_search(ticker)
+    
+    def _search_json_endpoint(self, url: str, ticker: str) -> Optional[str]:
+        """Search JSON endpoint for ticker to CIK mapping"""
         try:
-            # Try the submissions endpoint which is more reliable
-            url = f"https://data.sec.gov/submissions/CIK{ticker}.json"
             response = self.session.get(url, timeout=30)
+            if response.status_code != 200:
+                return None
+                
+            company_data = response.json()
             
+            # Handle different JSON structures
+            if isinstance(company_data, dict):
+                # Structure: {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}, ...}
+                for key, company_info in company_data.items():
+                    if isinstance(company_info, dict) and company_info.get('ticker', '').upper() == ticker.upper():
+                        cik_str = company_info.get('cik_str')
+                        if cik_str:
+                            formatted_cik = self._format_cik(cik_str)
+                            logger.info(f"Found {ticker} in {url}: CIK {formatted_cik}, Company: {company_info.get('title', 'Unknown')}")
+                            return formatted_cik
+            elif isinstance(company_data, list):
+                # Handle list structure
+                for company_info in company_data:
+                    if isinstance(company_info, dict) and company_info.get('ticker', '').upper() == ticker.upper():
+                        cik_str = company_info.get('cik_str') or company_info.get('cik')
+                        if cik_str:
+                            formatted_cik = self._format_cik(cik_str)
+                            logger.info(f"Found {ticker} in {url}: CIK {formatted_cik}")
+                            return formatted_cik
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error searching JSON endpoint {url}: {e}")
+            return None
+    
+    def _search_text_endpoint(self, url: str, ticker: str) -> Optional[str]:
+        """Search text-based endpoint for ticker to CIK mapping"""
+        try:
+            response = self.session.get(url, timeout=30)
+            if response.status_code != 200:
+                return None
+                
+            text_data = response.text
+            lines = text_data.split('\n')
+            
+            for line in lines:
+                # Common formats: "TICKER|CIK|NAME" or "TICKER:CIK:NAME" or tab-separated
+                parts = line.replace('\t', '|').replace(':', '|').split('|')
+                if len(parts) >= 2:
+                    line_ticker = parts[0].strip().upper()
+                    if line_ticker == ticker.upper():
+                        potential_cik = parts[1].strip()
+                        if potential_cik.isdigit():
+                            formatted_cik = self._format_cik(potential_cik)
+                            logger.info(f"Found {ticker} in {url}: CIK {formatted_cik}")
+                            return formatted_cik
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error searching text endpoint {url}: {e}")
+            return None
+    
+    def _manual_cik_search(self, ticker: str) -> Optional[str]:
+        """
+        Manual search approach using SEC search functionality
+        This is a last resort method
+        """
+        try:
+            # Try SEC's EDGAR search interface programmatically
+            search_endpoints = [
+                f"https://efts.sec.gov/LATEST/search-index?ticker={ticker}",
+                f"https://www.sec.gov/cgi-bin/browse-edgar?company={ticker}&CIK=&type=&dateb=&owner=include&action=getcompany"
+            ]
+            
+            for search_url in search_endpoints:
+                try:
+                    self._rate_limit()
+                    response = self.session.get(search_url, timeout=30)
+                    
+                    if response.status_code == 200:
+                        # Look for CIK patterns in the response
+                        import re
+                        text = response.text
+                        
+                        # Look for CIK patterns like "CIK: 0001234567" or "CIK=0001234567"
+                        cik_patterns = [
+                            r'CIK[:\s=]+(\d{10})',
+                            r'CIK[:\s=]+(\d{1,10})',
+                            r'cik[:\s=]+(\d{10})',
+                            r'cik[:\s=]+(\d{1,10})',
+                            r'"cik"[:\s]*"?(\d{1,10})"?',
+                            r'Central Index Key[:\s]+(\d{1,10})'
+                        ]
+                        
+                        for pattern in cik_patterns:
+                            matches = re.findall(pattern, text, re.IGNORECASE)
+                            if matches:
+                                cik = matches[0]
+                                formatted_cik = self._format_cik(cik)
+                                logger.info(f"Found {ticker} via manual search: CIK {formatted_cik}")
+                                
+                                # Verify this CIK actually belongs to the ticker by testing it
+                                if self._verify_cik_matches_ticker(formatted_cik, ticker):
+                                    return formatted_cik
+                
+                except Exception as e:
+                    logger.debug(f"Manual search URL {search_url} failed: {e}")
+                    continue
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Manual CIK search failed: {e}")
+            return None
+    
+    def _verify_cik_matches_ticker(self, cik: str, ticker: str) -> bool:
+        """Verify that a CIK actually matches the expected ticker"""
+        try:
+            self._rate_limit()
+            test_url = f"{self.base_url}/xbrl/companyfacts/CIK{cik}.json"
+            response = self.session.get(test_url, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                entity_name = data.get('entityName', '').upper()
+                found_ticker = data.get('ticker', '').upper()
+                
+                # Check if the ticker matches or if the company name contains the ticker
+                if (found_ticker == ticker.upper() or 
+                    ticker.upper() in entity_name or 
+                    entity_name.startswith(ticker.upper())):
+                    logger.info(f"Verified CIK {cik} matches {ticker} (Company: {data.get('entityName', 'Unknown')})")
+                    return True
+                else:
+                    logger.debug(f"CIK {cik} does not match {ticker} (Found: {found_ticker}, Entity: {entity_name})")
+                    return False
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error verifying CIK {cik} for ticker {ticker}: {e}")
+            return False
+    
+    def _lookup_cik_from_edgar_search(self, ticker: str) -> Optional[str]:
+        """
+        Look up CIK using EDGAR company search
+        """
+        try:
+            # Try the EDGAR company search endpoint
+            search_url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{ticker}/us-gaap/Assets.json"
+            self._rate_limit()
+            
+            response = self.session.get(search_url, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 cik = data.get('cik')
                 if cik:
                     formatted_cik = self._format_cik(cik)
-                    logger.info(f"Found CIK for {ticker} via SEC API: {formatted_cik}")
+                    logger.info(f"Found CIK for {ticker} via EDGAR search: {formatted_cik}")
                     return formatted_cik
             
-            # If that fails, try a few common CIK patterns
-            for potential_cik in [ticker_upper, f"000{ticker_upper}", f"0000{ticker_upper}"]:
-                test_url = f"{self.base_url}/xbrl/companyfacts/CIK{potential_cik}.json"
-                self._rate_limit()
-                
-                response = self.session.get(test_url, timeout=30)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('entityName', '').upper().startswith(ticker_upper):
-                        cik = data.get('cik')
-                        if cik:
+            # Try alternative EDGAR endpoints
+            alternative_endpoints = [
+                f"https://data.sec.gov/submissions/CIK{ticker}.json",
+                f"https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/CY2023Q4.json"
+            ]
+            
+            for endpoint in alternative_endpoints:
+                try:
+                    self._rate_limit()
+                    response = self.session.get(endpoint, timeout=30)
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        # Search for our ticker in the response
+                        if 'data' in data:
+                            for entry in data['data']:
+                                if isinstance(entry, dict) and entry.get('ticker', '').upper() == ticker.upper():
+                                    cik = entry.get('cik')
+                                    if cik:
+                                        formatted_cik = self._format_cik(cik)
+                                        logger.info(f"Found CIK for {ticker} in EDGAR data: {formatted_cik}")
+                                        return formatted_cik
+                        
+                        # Also check if this is a direct CIK response
+                        if data.get('cik') and data.get('ticker', '').upper() == ticker.upper():
+                            cik = data.get('cik')
                             formatted_cik = self._format_cik(cik)
-                            logger.info(f"Found CIK for {ticker} via pattern matching: {formatted_cik}")
+                            logger.info(f"Found CIK for {ticker} in direct response: {formatted_cik}")
                             return formatted_cik
+                            
+                except Exception as e:
+                    logger.debug(f"Alternative endpoint {endpoint} failed: {e}")
+                    continue
             
-            logger.warning(f"CIK not found for ticker: {ticker}")
-            logger.info(f"You may need to add {ticker} to the known_ciks mapping")
             return None
             
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching CIK for {ticker}: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Unexpected error getting CIK for {ticker}: {e}")
+            logger.debug(f"EDGAR search failed for {ticker}: {e}")
             return None
     
     def _format_cik(self, cik: Any) -> str:
@@ -168,8 +335,14 @@ class SECClient:
         self._rate_limit()
         
         try:
-            # Ensure CIK is properly formatted
-            formatted_cik = self._format_cik(cik)
+            # Ensure CIK is properly formatted (zero-padded to 10 digits)
+            if isinstance(cik, int):
+                formatted_cik = f"{cik:010d}"
+            elif isinstance(cik, str):
+                formatted_cik = f"{int(cik):010d}"
+            else:
+                raise ValueError(f"Invalid CIK format: {cik}")
+                
             url = f"{self.base_url}/xbrl/companyfacts/CIK{formatted_cik}.json"
             
             logger.info(f"Fetching company facts from: {url}")

@@ -79,7 +79,11 @@ class SimpleRatioCalculator:
             all_calculated_ratios = []
             calculation_summary = {}
             
-            for period_end_date, combined_data in financial_data_by_period.items():
+            # Sort periods to process latest first for summary
+            sorted_periods = sorted(financial_data_by_period.items(), key=lambda x: x[0], reverse=True)
+            is_first_period = True
+            
+            for period_end_date, combined_data in sorted_periods:
                 logger.info(f"Processing period {period_end_date} for {ticker}")
                 
                 # Get fiscal info from the combined data
@@ -129,7 +133,7 @@ class SimpleRatioCalculator:
                             period_ratios.append(ratio_record)
                             
                             # Track for summary (latest period only)
-                            if len(calculation_summary) == 0:
+                            if is_first_period:
                                 calculation_summary[ratio_name] = {
                                     'value': ratio_record['ratio_value'],
                                     'period_end_date': str(period_end_date),
@@ -137,7 +141,7 @@ class SimpleRatioCalculator:
                                 }
                         else:
                             # Track failed calculations for summary
-                            if len(calculation_summary) == 0:
+                            if is_first_period:
                                 calculation_summary[ratio_name] = {
                                     'error': 'Could not calculate - missing data',
                                     'period_end_date': str(period_end_date)
@@ -145,14 +149,17 @@ class SimpleRatioCalculator:
                     
                     except Exception as e:
                         logger.warning(f"Error calculating {ratio_name} for {ticker} period {period_end_date}: {e}")
-                        if len(calculation_summary) == 0:
+                        if is_first_period:
                             calculation_summary[ratio_name] = {
                                 'error': str(e),
                                 'period_end_date': str(period_end_date)
                             }
                 
                 all_calculated_ratios.extend(period_ratios)
-                logger.info(f"Calculated {len(period_ratios)} ratios for {ticker} period {period_end_date}")
+                logger.debug(f"Calculated {len(period_ratios)} ratios for {ticker} period {period_end_date}")
+                
+                # After first period, don't add to summary anymore
+                is_first_period = False
             
             # Step 5: Store in database
             if all_calculated_ratios:
@@ -165,7 +172,7 @@ class SimpleRatioCalculator:
                 with GrowthRatioCalculator() as growth_calc:
                     growth_result = growth_calc.calculate_yoy_growth_ratios(ticker)
                     if growth_result.get('status') == 'success':
-                        logger.info(f"Calculated {growth_result.get('ratios_calculated', 0)} growth ratios for {ticker}")
+                        logger.debug(f"Calculated {growth_result.get('ratios_calculated', 0)} growth ratios for {ticker}")
                     else:
                         logger.warning(f"Growth ratio calculation issue: {growth_result.get('error', 'Unknown error')}")
             except Exception as e:
@@ -195,9 +202,17 @@ class SimpleRatioCalculator:
             Dictionary mapping period_end_date to combined financial data
         """
         try:
-            # Get LTM data
-            ltm_income = self.ltm_calculator.calculate_ltm_for_all_quarters(ticker, 'income_statement')
-            ltm_cash_flow = self.ltm_calculator.calculate_ltm_for_all_quarters(ticker, 'cash_flow')
+            # Get LTM data - try pre-populated tables first, fallback to calculation
+            
+            # Try to get LTM data from pre-populated tables
+            ltm_income = self.database.get_ltm_income_statements(ticker)
+            ltm_cash_flow = self.database.get_ltm_cash_flow_statements(ticker)
+            
+            
+            # If LTM tables are empty, fall back to calculation (for backwards compatibility)
+            if not ltm_income or not ltm_cash_flow:
+                ltm_income = self.ltm_calculator.calculate_ltm_for_all_quarters(ticker, 'income_statement')
+                ltm_cash_flow = self.ltm_calculator.calculate_ltm_for_all_quarters(ticker, 'cash_flow')
             
             # Get FY data directly from database
             fy_income = self.database.get_income_statements(ticker)
@@ -215,6 +230,7 @@ class SimpleRatioCalculator:
             # Create mappings by period_end_date for LTM data
             ltm_income_by_date = {}
             for record in ltm_income:
+                # LTM tables now use standardized period_end_date field
                 period_date = self._parse_date(record.get('period_end_date'))
                 if period_date:
                     record['data_source'] = 'LTM'
@@ -223,6 +239,7 @@ class SimpleRatioCalculator:
             
             ltm_cf_by_date = {}
             for record in ltm_cash_flow:
+                # LTM tables now use standardized period_end_date field
                 period_date = self._parse_date(record.get('period_end_date'))
                 if period_date:
                     record['data_source'] = 'LTM'

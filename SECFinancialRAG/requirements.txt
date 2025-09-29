@@ -27,3 +27,6 @@ xlsxwriter>=3.0.0  # Excel writing
 
 # SEC data access
 sec-api>=1.0.0  # Alternative SEC API client
+
+# LLM Integration for agent responses
+requests>=2.28.0  # Already included above, but needed for OpenRouter API calls

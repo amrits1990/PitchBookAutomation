@@ -8,6 +8,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Configuration constants
+TAX_RATE = 0.26  # 26% corporate tax rate - can be modified as needed
+
 # Virtual fields configuration - maps virtual field names to ordered list of fallback expressions
 VIRTUAL_FIELDS = {
     # SG&A Expense - handles different reporting levels
@@ -62,7 +65,8 @@ VIRTUAL_FIELDS = {
     ],
 
     "cash_and_st_investments": [
-        "cash_and_cash_equivalents + COALESCE(short_term_investments, 0)"
+        "cash_and_cash_equivalents + COALESCE(short_term_investments, 0)",
+        "cash_and_short_term_investments" 
     ],
 
     "cash_and_st_investments_and_lt_investments": [
@@ -146,18 +150,18 @@ DEFAULT_RATIOS = {
         "category": "profitability"
     },
     "ROA": {
-        "formula": "net_income / total_assets", 
-        "description": "Return on Assets - Net income as % of total assets",
+        "formula": f"(ebit * (1 - {TAX_RATE})) / total_assets", 
+        "description": f"Return on Assets - NOPAT as % of total assets (using {TAX_RATE*100}% tax rate)",
         "category": "profitability"
     },
     "ROIC": {
-        "formula": "net_income / invested_capital",
-        "description": "Return on Invested Capital",
+        "formula": f"(ebit * (1 - {TAX_RATE})) / invested_capital",
+        "description": f"Return on Invested Capital - NOPAT as % of invested capital (using {TAX_RATE*100}% tax rate)",
         "category": "profitability"
     },
     "Net_ROIC": {
-        "formula": "net_income / net_invested_capital",
-        "description": "Return on Invested Capital (Ex. Cash)",
+        "formula": f"(ebit * (1 - {TAX_RATE})) / net_invested_capital",
+        "description": f"Return on Invested Capital (Ex. Cash) - NOPAT as % of net invested capital (using {TAX_RATE*100}% tax rate)",
         "category": "profitability"
     },
     "Net_Margin": {
@@ -186,8 +190,8 @@ DEFAULT_RATIOS = {
         "category": "profitability"
     },
     "NOPAT_Margin": {
-        "formula": "(ebit - COALESCE(income_tax_expense,0)) / total_revenue",
-        "description": "NOPAT Margin - Net Operating Profit After Tax as % of revenue",
+        "formula": f"(ebit * (1 - {TAX_RATE})) / total_revenue",
+        "description": f"NOPAT Margin - Net Operating Profit After Tax as % of revenue (using {TAX_RATE*100}% tax rate)",
         "category": "profitability"
     },
     
@@ -338,17 +342,23 @@ class VirtualFieldResolver:
         resolved_data = financial_data.copy()
         
         # Recursive resolution with dependency tracking
-        max_iterations = 5  # Prevent infinite loops
+        max_iterations = 10  # Increase iterations for complex dependency chains
         for iteration in range(max_iterations):
             initial_count = len([k for k, v in resolved_data.items() if k in self.virtual_fields and v is not None])
+            logger.debug(f"Virtual field resolution iteration {iteration + 1}: {initial_count} fields resolved")
             
             for virtual_field, source_expressions in self.virtual_fields.items():
                 if virtual_field not in resolved_data or resolved_data[virtual_field] is None:
-                    # Try each source expression until we get a non-null value
+                    # Try each source expression until we get a non-null value with valid components
                     for expression in source_expressions:
                         try:
+                            # Check if expression has valid components before evaluating
+                            if not self._expression_has_valid_components(expression, resolved_data):
+                                logger.debug(f"Skipping {expression} for {virtual_field}: missing components")
+                                continue
+                                
                             value = self._evaluate_expression(expression, resolved_data)
-                            if value is not None:  # Accept zero values for virtual fields
+                            if value is not None:  # Accept all valid values including zero
                                 resolved_data[virtual_field] = value
                                 logger.debug(f"Resolved {virtual_field} = {value} using: {expression}")
                                 break
@@ -358,6 +368,7 @@ class VirtualFieldResolver:
             
             # Check if we made progress
             final_count = len([k for k, v in resolved_data.items() if k in self.virtual_fields and v is not None])
+            logger.debug(f"After iteration {iteration + 1}: {final_count} fields resolved")
             if final_count == initial_count:
                 break  # No more progress possible
                 
@@ -412,6 +423,61 @@ class VirtualFieldResolver:
         except Exception as e:
             logger.debug(f"Error evaluating expression '{expression}': {e}")
             return None
+    
+    def _expression_has_valid_components(self, expression: str, data: Dict) -> bool:
+        """
+        Check if expression has all required components available and non-null
+        Only validates fields OUTSIDE of COALESCE - fields inside COALESCE can be null
+        
+        Args:
+            expression: Mathematical expression string
+            data: Financial data dictionary
+            
+        Returns:
+            True if all non-COALESCE components are available and non-null
+        """
+        try:
+            import re
+            
+            # Remove COALESCE functions and their contents from validation
+            # COALESCE(field, default) -> fields inside can be null, so exclude from validation
+            expr_for_validation = expression
+            coalesce_pattern = r'COALESCE\([^)]+\)'
+            expr_for_validation = re.sub(coalesce_pattern, '', expr_for_validation)
+            
+            # Extract field names from the expression (excluding COALESCE contents)
+            field_pattern = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
+            potential_fields = re.findall(field_pattern, expr_for_validation)
+            
+            # Filter out mathematical operators and functions
+            operators = {'COALESCE', 'and', 'or', 'not', 'if', 'else', 'def', 'return', 'import', 'from', 'as'}
+            field_names = [f for f in potential_fields if f not in operators and not f.isdigit()]
+            
+            # Check that all non-COALESCE fields exist and are non-null
+            for field_name in field_names:
+                if field_name in data:
+                    value = data[field_name]
+                    if value is None:
+                        logger.debug(f"Rejecting expression '{expression}': field '{field_name}' is null")
+                        return False
+                else:
+                    # Field not present in data
+                    logger.debug(f"Rejecting expression '{expression}': field '{field_name}' not found in data")
+                    return False
+            
+            # Must have at least one field to validate (or be an expression without field dependencies)
+            if len(field_names) == 0:
+                # Check if this is just a COALESCE expression or a constant
+                if 'COALESCE' in expression or expression.replace(' ', '').replace('.', '').isdigit():
+                    return True
+                logger.debug(f"Rejecting expression '{expression}': no fields found")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Error checking expression components '{expression}': {e}")
+            return False
     
     def get_available_virtual_fields(self) -> List[str]:
         """Get list of available virtual field names"""

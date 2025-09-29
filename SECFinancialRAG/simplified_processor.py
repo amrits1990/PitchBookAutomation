@@ -8,6 +8,7 @@ from typing import Dict, List, Any, Optional, Tuple, Set, Union
 from collections import defaultdict
 from datetime import datetime
 from dateutil.parser import parse as parse_date
+from dateutil.relativedelta import relativedelta
 
 try:
     from .mapping import FinancialDataMapper
@@ -15,6 +16,8 @@ except ImportError:
     from mapping import FinancialDataMapper
 
 logger = logging.getLogger(__name__)
+# Ensure INFO level for debugging
+logger.setLevel(logging.INFO)
 
 
 class BaseStatementProcessor:
@@ -43,7 +46,7 @@ class BalanceSheetProcessor(BaseStatementProcessor):
     def get_statement_fields(self) -> Set[str]:
         """Get balance sheet database fields"""
         return {
-            'cash_and_cash_equivalents', 'short_term_investments', 'accounts_receivable', 
+            'cash_and_cash_equivalents', 'short_term_investments', 'cash_and_short_term_investments', 'accounts_receivable', 
             'inventory', 'prepaid_expenses', 'total_current_assets', 'property_plant_equipment',
             'goodwill', 'intangible_assets', 'long_term_investments', 'other_assets',
             'total_non_current_assets', 'total_assets', 'accounts_payable', 'accrued_liabilities',
@@ -90,7 +93,7 @@ class IncomeStatementProcessor(BaseStatementProcessor):
         return {
             'total_revenue', 'cost_of_revenue', 'gross_profit', 'research_and_development',
             'sales_and_marketing', 'sales_general_and_admin', 'general_and_administrative', 'total_operating_expenses',
-            'operating_income', 'interest_income', 'interest_expense', 'other_income',
+            'operating_income', 'ebitda', 'interest_income', 'interest_expense', 'other_income',
             'income_before_taxes', 'income_tax_expense', 'net_income',
             'earnings_per_share_basic', 'earnings_per_share_diluted',
             'weighted_average_shares_basic', 'weighted_average_shares_diluted'
@@ -237,6 +240,10 @@ class SimplifiedSECFinancialProcessor:
                        f"{len(income_statement_results)} income statements, "
                        f"{len(cash_flow_results)} cash flow statements")
             
+            # Sort all results by period_end_date in descending order (newest first)
+            results.sort(key=lambda x: x.get('period_end_date', ''), reverse=True)
+            logger.debug(f"Sorted {len(results)} records by period_end_date (newest first)")
+            
             return results
             
         except Exception as e:
@@ -323,7 +330,10 @@ class SimplifiedSECFinancialProcessor:
                         # Update period info
                         period_info = periods[period_key]
                         period_info['end_date'] = end_date_obj
-                        period_info['start_date'] = start_date_obj
+                        # IMPROVED: Only update start_date if we have a valid value and current value is None
+                        # This prevents overwriting valid start dates with None from subsequent fact entries
+                        if start_date_obj is not None and period_info['start_date'] is None:
+                            period_info['start_date'] = start_date_obj
                         period_info['filed_date'] = filed_date_obj
                         period_info['form_type'] = form_type
                         period_info['period_type'] = period_type
@@ -337,11 +347,14 @@ class SimplifiedSECFinancialProcessor:
                             if 'fact_candidates' not in period_info:
                                 period_info['fact_candidates'] = defaultdict(list)
                             
+                            
                             # Store both the GAAP code and value for later conflict resolution
                             period_info['fact_candidates'][db_column].append({
                                 'gaap_code': fact_name,
                                 'value': value,
-                                'unit_type': unit_type
+                                'unit_type': unit_type,
+                                'frame': entry.get('frame'),  # Include frame for better conflict resolution
+                                'filed_date': filed_date_obj
                             })
                         
                     except Exception as e:
@@ -357,21 +370,51 @@ class SimplifiedSECFinancialProcessor:
                 if 'facts' not in period_info:
                     period_info['facts'] = {}
                 
-                # Resolve conflicts by taking the highest value for each database column
+                # Resolve conflicts by taking the best value for each database column
                 for db_column, candidates in period_info['fact_candidates'].items():
                     if len(candidates) > 1:
-                        # Multiple GAAP codes map to this column - take the highest value
-                        highest_candidate = max(candidates, key=lambda x: x['value'] if x['value'] is not None else float('-inf'))
-                        logger.debug(f"Conflict resolved for {ticker} {period_info['end_date']} {db_column}: "
-                                   f"selected {highest_candidate['gaap_code']} = {highest_candidate['value']} "
-                                   f"from {len(candidates)} candidates")
-                        period_info['facts'][db_column] = highest_candidate['value']
+                        # Multiple GAAP codes map to this column
+                        # First filter out None values, then take the highest value
+                        non_none_candidates = [c for c in candidates if c['value'] is not None]
+                        
+                        
+                        if non_none_candidates:
+                            # Use the highest non-None value
+                            highest_candidate = max(non_none_candidates, key=lambda x: x['value'])
+                            logger.debug(f"Conflict resolved for {ticker} {period_info['end_date']} {db_column}: "
+                                       f"selected {highest_candidate['gaap_code']} = {highest_candidate['value']} "
+                                       f"from {len(non_none_candidates)} non-None candidates (total: {len(candidates)})")
+                            period_info['facts'][db_column] = highest_candidate['value']
+                        else:
+                            # All candidates are None, log this case
+                            logger.warning(f"All candidates for {ticker} {period_info['end_date']} {db_column} are None: "
+                                         f"{[c['gaap_code'] for c in candidates]}")
+                            period_info['facts'][db_column] = None
                     else:
                         # Only one candidate, use it directly
-                        period_info['facts'][db_column] = candidates[0]['value']
+                        candidate_value = candidates[0]['value']
+                        if candidate_value is None:
+                            logger.debug(f"Single candidate for {ticker} {period_info['end_date']} {db_column} is None: "
+                                       f"{candidates[0]['gaap_code']}")
+                        period_info['facts'][db_column] = candidate_value
                 
                 # Clean up temporary data
                 del period_info['fact_candidates']
+        
+        # COMPUTED GAAP FIELDS: Apply arithmetic computations ONLY for missing fields
+        # VERIFIED: Basic consolidation works correctly, computed fields will only fill gaps
+        logger.debug(f"Applying computed GAAP fields for {len(periods)} periods (AFTER conflict resolution)")
+        for period_key, period_info in periods.items():
+            try:
+                # Apply computed field logic using raw GAAP facts for this specific period
+                # This will only fill in missing/null fields, never overwrite direct mappings
+                period_info['facts'] = self.mapper.compute_missing_fields_from_raw_gaap(
+                    period_info['facts'], 
+                    us_gaap_facts,  # Raw GAAP facts
+                    period_key
+                )
+            except Exception as e:
+                logger.debug(f"Error computing missing fields for period {period_key}: {e}")
         
         # FISCAL YEAR CONSISTENCY FIX: Ensure fiscal_year comes from oldest filing for each period
         # Group periods by end_date and period_length to consolidate fiscal_year
@@ -399,6 +442,56 @@ class SimplifiedSECFinancialProcessor:
                         period_info['fiscal_year'] = oldest_fiscal_year
         
         return dict(periods)
+    
+    def _get_preferred_fact_value(self, fact_name: str, periods_list: List[Tuple[str, Dict[str, Any]]], filing_preference: str) -> Optional[any]:
+        """
+        Get preferred value for a fact, prioritizing direct mappings over computed values
+        
+        Args:
+            fact_name: Database column name
+            periods_list: List of (period_key, period_info) tuples sorted by filing date
+            filing_preference: 'original' or 'latest'
+            
+        Returns:
+            The preferred value or None if not found
+        """
+        # Separate direct mappings from computed values
+        direct_candidates = []
+        computed_candidates = []
+        
+        for period_key, period_info in periods_list:
+            if fact_name in period_info['facts'] and period_info['facts'][fact_name] is not None:
+                is_computed = period_info['facts'].get(f"_computed_{fact_name}", False)
+                candidate = (period_key, period_info)
+                
+                if is_computed:
+                    computed_candidates.append(candidate)
+                else:
+                    direct_candidates.append(candidate)
+        
+        # Prioritize direct mappings over computed values
+        if direct_candidates:
+            candidates = direct_candidates
+            value_type = "DIRECT"
+        elif computed_candidates:
+            candidates = computed_candidates 
+            value_type = "COMPUTED"
+        else:
+            return None
+        
+        # Apply filing preference within the chosen category
+        if filing_preference == 'original':
+            chosen_candidate = candidates[0]  # Oldest
+        else:  # 'latest'
+            chosen_candidate = candidates[-1]  # Newest
+        
+        chosen_value = chosen_candidate[1]['facts'][fact_name]
+        
+        if len(direct_candidates) > 0 and len(computed_candidates) > 0:
+            logger.debug(f"Consolidation for {fact_name}: chose {value_type} value {chosen_value:,.0f} "
+                        f"(had {len(direct_candidates)} direct, {len(computed_candidates)} computed candidates)")
+        
+        return chosen_value
     
     def _process_balance_sheets(self, all_periods: Dict[str, Dict[str, Any]], ticker: str, cik: str, entity_name: str) -> List[Dict[str, Any]]:
         """Process balance sheet statements with consolidation by period_end_date"""
@@ -491,20 +584,14 @@ class SimplifiedSECFinancialProcessor:
                 if fact_name in balance_sheet_fields
             )
         
-        # For each balance sheet fact, find the preferred value
+        # For each balance sheet fact, find the preferred value with computed value priority logic
         for fact_name in all_balance_sheet_facts:
-            if self.filing_preference == 'original':
-                # Use oldest filing that has this fact
-                for _, period_info in periods_list:
-                    if fact_name in period_info['facts']:
-                        consolidated_facts[fact_name] = period_info['facts'][fact_name]
-                        break
-            else:  # 'latest'
-                # Use latest filing that has this fact
-                for _, period_info in reversed(periods_list):
-                    if fact_name in period_info['facts']:
-                        consolidated_facts[fact_name] = period_info['facts'][fact_name]
-                        break
+            value = self._get_preferred_fact_value(fact_name, periods_list, self.filing_preference)
+            if value is not None:
+                consolidated_facts[fact_name] = value
+        
+        # Clean up computed markers from consolidated facts (don't store these in database)
+        consolidated_facts = {k: v for k, v in consolidated_facts.items() if not k.startswith('_computed_')}
         
         logger.debug(f"Consolidated balance sheet for {ticker} {end_date}: "
                     f"{len(consolidated_facts)} facts from {len(periods_list)} filings, "
@@ -515,6 +602,7 @@ class SimplifiedSECFinancialProcessor:
             base_period_info, consolidated_facts, ticker, cik, entity_name
         )
         
+        
         return record
     
     def _process_income_statements(self, all_periods: Dict[str, Dict[str, Any]], ticker: str, cik: str, entity_name: str) -> List[Dict[str, Any]]:
@@ -523,6 +611,8 @@ class SimplifiedSECFinancialProcessor:
         income_statement_fields = self.income_statement_processor.get_statement_fields()
         
         results = []
+        skipped_count = 0
+        
         for period_key, period_info in all_periods.items():
             # Check if this period has income statement facts
             income_facts = {
@@ -531,6 +621,38 @@ class SimplifiedSECFinancialProcessor:
             }
             
             if income_facts:
+                # CRITICAL VALIDATION: Only process records with reliable period information
+                # Income statements can be 3/6/9/12 month cumulative, so we need to know the exact period
+                start_date = period_info.get('start_date')
+                period_length = period_info.get('period_length_months')
+                
+                if start_date is None and period_length is None:
+                    logger.warning(f"Skipping income statement for {ticker} {period_info.get('end_date')} "
+                                 f"(period_key: {period_key}): No start_date or period_length to determine "
+                                 f"if this is 3/6/9/12 month data. Cannot reliably classify period type.")
+                    skipped_count += 1
+                    continue
+                
+                # Smart handling: If we have period_length but no start_date, calculate indicative start_date
+                if start_date is None and period_length is not None:
+                    end_date = period_info.get('end_date')
+                    if end_date:
+                        # Calculate indicative start date based on period length
+                        calculated_start_date = end_date - relativedelta(months=period_length)
+                        
+                        # Update the period_info with calculated start date
+                        period_info['start_date'] = calculated_start_date
+                        period_info['_calculated_start_date'] = True  # Mark as calculated for transparency
+                        
+                        logger.info(f"Calculated start_date for {ticker} {end_date}: "
+                                  f"period_length={period_length} months -> start_date={calculated_start_date} "
+                                  f"(calculated from end_date)")
+                    else:
+                        logger.warning(f"Skipping income statement for {ticker}: "
+                                     f"has period_length={period_length} but no end_date to calculate start_date")
+                        skipped_count += 1
+                        continue
+                
                 try:
                     record = self.income_statement_processor.create_statement_record(
                         period_info, income_facts, ticker, cik, entity_name
@@ -540,7 +662,10 @@ class SimplifiedSECFinancialProcessor:
                     logger.error(f"Error creating income statement for {ticker} {period_key}: {e}")
                     continue
         
-        logger.info(f"Created {len(results)} income statements for {ticker}")
+        if skipped_count > 0:
+            logger.warning(f"Skipped {skipped_count} income statement records for {ticker} due to missing period information")
+        
+        logger.info(f"Created {len(results)} income statements for {ticker} (skipped {skipped_count})")
         return results
     
     def _process_cash_flows(self, all_periods: Dict[str, Dict[str, Any]], ticker: str, cik: str, entity_name: str) -> List[Dict[str, Any]]:
@@ -549,6 +674,8 @@ class SimplifiedSECFinancialProcessor:
         cash_flow_fields = self.cash_flow_processor.get_statement_fields()
         
         results = []
+        skipped_count = 0
+        
         for period_key, period_info in all_periods.items():
             # Check if this period has cash flow facts
             cash_flow_facts = {
@@ -557,6 +684,38 @@ class SimplifiedSECFinancialProcessor:
             }
             
             if cash_flow_facts:
+                # CRITICAL VALIDATION: Only process records with reliable period information
+                # Cash flow statements can be 3/6/9/12 month cumulative, so we need to know the exact period
+                start_date = period_info.get('start_date')
+                period_length = period_info.get('period_length_months')
+                
+                if start_date is None and period_length is None:
+                    logger.warning(f"Skipping cash flow statement for {ticker} {period_info.get('end_date')} "
+                                 f"(period_key: {period_key}): No start_date or period_length to determine "
+                                 f"if this is 3/6/9/12 month data. Cannot reliably classify period type.")
+                    skipped_count += 1
+                    continue
+                
+                # Smart handling: If we have period_length but no start_date, calculate indicative start_date
+                if start_date is None and period_length is not None:
+                    end_date = period_info.get('end_date')
+                    if end_date:
+                        # Calculate indicative start date based on period length
+                        calculated_start_date = end_date - relativedelta(months=period_length)
+                        
+                        # Update the period_info with calculated start date
+                        period_info['start_date'] = calculated_start_date
+                        period_info['_calculated_start_date'] = True  # Mark as calculated for transparency
+                        
+                        logger.info(f"Calculated start_date for {ticker} {end_date}: "
+                                  f"period_length={period_length} months -> start_date={calculated_start_date} "
+                                  f"(calculated from end_date)")
+                    else:
+                        logger.warning(f"Skipping cash flow statement for {ticker}: "
+                                     f"has period_length={period_length} but no end_date to calculate start_date")
+                        skipped_count += 1
+                        continue
+                
                 try:
                     record = self.cash_flow_processor.create_statement_record(
                         period_info, cash_flow_facts, ticker, cik, entity_name
@@ -566,5 +725,8 @@ class SimplifiedSECFinancialProcessor:
                     logger.error(f"Error creating cash flow statement for {ticker} {period_key}: {e}")
                     continue
         
-        logger.info(f"Created {len(results)} cash flow statements for {ticker}")
+        if skipped_count > 0:
+            logger.warning(f"Skipped {skipped_count} cash flow records for {ticker} due to missing period information")
+        
+        logger.info(f"Created {len(results)} cash flow statements for {ticker} (skipped {skipped_count})")
         return results

@@ -192,6 +192,7 @@ class GrowthRatioCalculator:
                         'description': 'Revenue Growth YoY - Year-over-year growth in total revenue',
                         'category': 'growth',
                         'period_end_date': period_end_date,
+                        'period_type': 'LTM',  # Always 'LTM' for all ratios
                         'fiscal_year': current_fy,
                         'fiscal_quarter': 'FY',
                         'calculation_inputs': {
@@ -221,6 +222,7 @@ class GrowthRatioCalculator:
                         'description': 'EBIT Growth YoY - Year-over-year growth in EBIT (Operating Income)',
                         'category': 'growth',
                         'period_end_date': period_end_date,
+                        'period_type': 'LTM',  # Always 'LTM' for all ratios
                         'fiscal_year': current_fy,
                         'fiscal_quarter': 'FY',
                         'calculation_inputs': {
@@ -234,6 +236,38 @@ class GrowthRatioCalculator:
                     
                     all_growth_ratios.append(ebit_ratio)
                     logger.debug(f"Calculated EBIT Growth for FY{current_fy}: {ebit_growth:.4f}")
+                
+                # Calculate EBITDA Growth
+                current_ebitda = current_stmt.get('ebitda')
+                previous_ebitda = previous_stmt.get('ebitda')
+                
+                if current_ebitda and previous_ebitda and previous_ebitda != 0:
+                    ebitda_growth = (current_ebitda - previous_ebitda) / previous_ebitda
+                    
+                    ebitda_ratio = {
+                        'company_id': company_id,
+                        'ticker': ticker,
+                        'name': 'EBITDA_Growth_YoY',
+                        'ratio_value': ebitda_growth,
+                        'description': 'EBITDA Growth YoY - Year-over-year growth in EBITDA',
+                        'category': 'growth',
+                        'period_end_date': period_end_date,
+                        'period_type': 'LTM',  # Always 'LTM' for all ratios
+                        'fiscal_year': current_fy,
+                        'fiscal_quarter': 'FY',
+                        'calculation_inputs': {
+                            'current_ebitda': float(current_ebitda) if current_ebitda else None,
+                            'previous_ebitda': float(previous_ebitda) if previous_ebitda else None,
+                            'current_fy': current_fy,
+                            'previous_fy': previous_fy
+                        },
+                        'calculation_date': datetime.utcnow()
+                    }
+                    
+                    all_growth_ratios.append(ebitda_ratio)
+                    logger.debug(f"Calculated EBITDA Growth for FY{current_fy}: {ebitda_growth:.4f}")
+                else:
+                    logger.debug(f"Cannot calculate EBITDA Growth for FY{current_fy}: current_ebitda={current_ebitda}, previous_ebitda={previous_ebitda}")
             
             # Store growth ratios
             stored_count = 0
@@ -272,6 +306,7 @@ class GrowthRatioCalculator:
                     period_end = ltm_data.get('period_end_date')  # Use period_end_date, not ltm_period_end
                     revenue = ltm_data.get('total_revenue')
                     ebit = ltm_data.get('ebit') or ltm_data.get('operating_income')
+                    ebitda = ltm_data.get('ebitda')
                     
                     if period_end and (revenue is not None or ebit is not None):
                         # Convert string date to date object if needed
@@ -285,6 +320,7 @@ class GrowthRatioCalculator:
                             'fiscal_year': ltm_data.get('fiscal_year'),
                             'total_revenue': revenue,
                             'ebit': ebit,
+                            'ebitda': ebitda,
                             'original_data': ltm_data
                         })
             
@@ -295,6 +331,7 @@ class GrowthRatioCalculator:
                     period_end = stmt.get('period_end_date')
                     revenue = stmt.get('total_revenue')
                     ebit = stmt.get('ebit') or stmt.get('operating_income')
+                    ebitda = stmt.get('ebitda')
                     
                     if period_end and (revenue is not None or ebit is not None):
                         all_periods.append({
@@ -304,6 +341,7 @@ class GrowthRatioCalculator:
                             'fiscal_year': stmt.get('fiscal_year'),
                             'total_revenue': revenue,
                             'ebit': ebit,
+                            'ebitda': ebitda,
                             'original_data': stmt
                         })
             
@@ -391,6 +429,10 @@ class GrowthRatioCalculator:
             'EBIT_Growth_YoY': {
                 'field': 'ebit',
                 'description': f'EBIT Growth YoY - Year-over-year growth in EBIT ({days_diff} days)'
+            },
+            'EBITDA_Growth_YoY': {
+                'field': 'ebitda',
+                'description': f'EBITDA Growth YoY - Year-over-year growth in EBITDA ({days_diff} days)'
             }
         }
         
@@ -409,9 +451,13 @@ class GrowthRatioCalculator:
             growth_rate = (float(current_value) - float(previous_value)) / float(previous_value)
             
             # Determine period type and fiscal info
-            period_type = current_period.get('period_type', 'LTM')
+            # For all ratios, period_type should be 'LTM' to match other ratios
+            period_type = 'LTM'
             data_source = current_period.get('data_source', 'LTM')
             fiscal_year = current_period.get('fiscal_year')
+            
+            # Get the correct fiscal_quarter that aligns with other ratios for this period_end_date
+            fiscal_quarter = self._get_fiscal_quarter_for_period_end_date(ticker, current_date)
             
             growth_ratio = {
                 'company_id': company_id,
@@ -421,8 +467,9 @@ class GrowthRatioCalculator:
                 'description': description,
                 'category': 'growth',
                 'period_end_date': current_date,
+                'period_type': period_type,  # Always 'LTM'
                 'fiscal_year': fiscal_year,
-                'fiscal_quarter': period_type,
+                'fiscal_quarter': fiscal_quarter,  # Q1/Q2/Q3/Q4
                 'data_source': data_source,
                 'calculation_inputs': {
                     'current_value': float(current_value),
@@ -442,6 +489,50 @@ class GrowthRatioCalculator:
                         f"(vs {previous_date}, {days_diff} days apart)")
         
         return growth_ratios
+    
+    def _get_fiscal_quarter_for_period_end_date(self, ticker: str, period_end_date) -> str:
+        """
+        Determine the correct fiscal_quarter for a period_end_date by looking up 
+        what fiscal_quarter other ratios use for the same period_end_date
+        """
+        try:
+            with self.database.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT fiscal_quarter, COUNT(*) as count
+                    FROM calculated_ratios 
+                    WHERE ticker = %s AND period_end_date = %s
+                    AND fiscal_quarter IN ('Q1', 'Q2', 'Q3', 'Q4')
+                    GROUP BY fiscal_quarter
+                    ORDER BY count DESC
+                    LIMIT 1
+                """, (ticker, period_end_date))
+                
+                result = cursor.fetchone()
+                if result:
+                    return result[0]
+                else:
+                    # Fallback: determine quarter based on month of period_end_date
+                    month = period_end_date.month
+                    if month in [1, 2, 3]:
+                        return 'Q1'
+                    elif month in [4, 5, 6]:
+                        return 'Q2'
+                    elif month in [7, 8, 9]:
+                        return 'Q3'
+                    else:  # month in [10, 11, 12]
+                        return 'Q4'
+        except Exception as e:
+            logger.warning(f"Error determining fiscal_quarter for {period_end_date}: {e}")
+            # Fallback to calendar quarter
+            month = period_end_date.month
+            if month in [1, 2, 3]:
+                return 'Q1'
+            elif month in [4, 5, 6]:
+                return 'Q2'
+            elif month in [7, 8, 9]:
+                return 'Q3'
+            else:
+                return 'Q4'
     
     # Old methods removed - now using simplified approach
     
@@ -483,9 +574,9 @@ class GrowthRatioCalculator:
                     ratio_data['name'],
                     ratio_data.get('category', 'growth'),  # Add category
                     ratio_data['period_end_date'],
-                    ratio_data['fiscal_quarter'],  # period_type
+                    ratio_data['period_type'],  # Should be 'LTM'
                     ratio_data['fiscal_year'],
-                    ratio_data['fiscal_quarter'],
+                    ratio_data['fiscal_quarter'],  # Should be Q1/Q2/Q3/Q4
                     ratio_data['ratio_value'],
                     json.dumps(ratio_data['calculation_inputs']),  # JSON string
                     ratio_data.get('data_source', 'annual')  # data_source

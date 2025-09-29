@@ -1,200 +1,374 @@
-# SEC Financial RAG Package
+# SECFinancialRAG - AI-Ready Financial Analysis Module
 
-A comprehensive financial statement RAG system that fetches real financial data from the SEC EDGAR API, stores it in PostgreSQL, and provides advanced analysis capabilities including LTM calculations and financial ratio analysis.
+A production-ready financial RAG (Retrieval-Augmented Generation) system designed for AI agents. Provides comprehensive financial analysis capabilities with SEC EDGAR data integration, intelligent caching, and standardized agent interfaces.
 
-## Features
+## 🤖 **AI Agent Interface**
 
-- **SEC Data Integration**: Direct integration with SEC EDGAR API for real financial data
-- **PostgreSQL Storage**: Structured storage with separate tables for income statements, balance sheets, and cash flows
-- **LTM Calculations**: Last Twelve Months calculations for income statement and cash flow metrics
-- **Financial Ratio Calculator**: Advanced ratio calculation system with virtual field resolution
-- **Hybrid Ratio Definitions**: Support for both global and company-specific ratio definitions
-- **Virtual Fields**: Intelligent handling of inconsistent financial line items across companies
-- **Data Validation**: Comprehensive validation and error handling
-
-## 🚀 Standalone Package Interface
-
-**For external projects - simple one-line usage:**
+**Primary interface for AI agents - standardized JSON responses with comprehensive error handling:**
 
 ```python
-import SECFinancialRAG as sfr
-
-# Get comprehensive financial data as pandas DataFrame
-df = sfr.get_financial_data('AAPL')
-
-# df contains:
-# - All LTM income statement and cash flow data
-# - All point-in-time balance sheet data  
-# - All calculated financial ratios
-# - Data indexed by period_end_date
-```
-
-### DataFrame Structure
-
-The returned DataFrame contains:
-
-| Column | Description |
-|--------|-------------|
-| `ticker` | Company ticker symbol |
-| `period_end_date` | Period end date (index) |
-| `period_type` | Q1, Q2, Q3, Q4, FY, LTM |
-| `data_source` | LTM, point_in_time, calculated |
-| `statement_type` | income_statement, balance_sheet, cash_flow, ratio |
-| `fiscal_year` | Fiscal year |
-| *Financial Fields* | All financial statement line items |
-| *Ratio Fields* | All calculated financial ratios |
-
-### Multiple Companies
-
-```python
-# Get data for multiple companies
-df_multi = sfr.get_multiple_companies_data(['AAPL', 'MSFT', 'GOOGL'])
-
-# Filter and analyze
-revenue_comparison = df_multi[df_multi['data_source'] == 'LTM'][['ticker', 'total_revenue']]
-```
-
-### Filtering Examples
-
-```python
-# Get only LTM data
-ltm_data = df[df['data_source'] == 'LTM']
-
-# Get only ratios
-ratios = df[df['statement_type'] == 'ratio']
-
-# Get only balance sheet data
-balance_sheet = df[df['statement_type'] == 'balance_sheet']
-
-# Get latest period data
-latest = df[df['period_end_date'] == df['period_end_date'].max()]
-```
-
-## Quick Start
-
-### Basic Usage
-
-To run the code from the project root:
-```bash
-python run_sec_rag.py MSFT --ltm
-python SECFinancialRAG/run_sec_rag.py MSFT --ltm
-```
-
-To run directly from this folder:
-```bash
-python run_sec_rag.py MSFT --ltm
-```
-
-### Examples
-
-- Process single company: `python run_sec_rag.py AAPL`
-- Process multiple companies: `python run_sec_rag.py AAPL MSFT GOOGL`
-- With validation and LTM: `python run_sec_rag.py AAPL --validate --ltm`
-- With ratio calculation: `python run_sec_rag.py AAPL --ratios`
-- Full processing: `python run_sec_rag.py AAPL --validate --ltm --ratios`
-- Help: `python run_sec_rag.py --help`
-
-### Ratio Calculator Demo
-
-```bash
-python example_ratio_usage.py
-```
-
-## Financial Ratio Calculator
-
-The ratio calculator provides comprehensive financial analysis capabilities:
-
-### Key Features
-
-1. **Virtual Fields**: Automatically handles inconsistent financial reporting
-   - AAPL reports SG&A as single line → uses `sales_general_and_admin`
-   - MSFT reports S&M and G&A separately → uses `sales_and_marketing + general_and_administrative`
-   - System automatically resolves to best available data
-
-2. **Hybrid Ratio System**: 
-   - Global ratios apply to all companies
-   - Company-specific ratios override global ones
-   - Easy to customize for industry-specific needs
-
-3. **LTM Integration**:
-   - Uses Last Twelve Months data for income statement ratios
-   - Uses LTM data for cash flow ratios  
-   - Uses point-in-time data for balance sheet ratios
-
-4. **Default Ratios Included**:
-   - **Profitability**: ROE, ROA, ROIC, Net Margin, Operating Margin, Gross Margin
-   - **Liquidity**: Current Ratio, Quick Ratio, Cash Ratio
-   - **Leverage**: Debt-to-Equity, Debt-to-Assets, Interest Coverage
-   - **Efficiency**: Asset Turnover, Inventory Turnover, Receivables Turnover
-   - **Cash Flow**: Operating Cash Margin, Free Cash Flow Margin
-
-### Programmatic Usage
-
-```python
-from SECFinancialRAG import (
-    process_company_financials,
-    initialize_default_ratios,
-    calculate_company_ratios,
-    get_company_ratios,
-    create_company_specific_ratio
+from SECFinancialRAG.agent_interface import (
+    get_financial_metrics_for_agent,
+    get_ratios_for_agent,
+    compare_companies_for_agent,
+    get_ratio_definition_for_agent,
+    get_available_ratio_categories_for_agent
 )
 
-# Initialize default ratios (one-time)
+# Get financial metrics with intelligent field mapping
+response = get_financial_metrics_for_agent(
+    ticker='AAPL', 
+    metrics=['revenue', 'net income', 'free cash flow'],
+    period='LTM'
+)
+
+# Get comprehensive ratio analysis
+response = get_ratios_for_agent(
+    ticker='AAPL',
+    categories=['profitability', 'liquidity'],
+    period='last 4 quarters'
+)
+
+# Compare multiple companies
+response = compare_companies_for_agent(
+    tickers=['AAPL', 'MSFT', 'GOOGL'],
+    categories=['profitability'],
+    period='latest'
+)
+```
+
+### **Agent Response Format**
+
+All agent functions return standardized `FinancialAgentResponse` objects:
+
+```python
+@dataclass
+class FinancialAgentResponse:
+    success: bool                    # Operation success status
+    data: Optional[Dict[str, Any]]   # Structured financial data
+    error: Optional[Dict[str, str]]  # Error details if failed
+    metadata: Dict[str, Any]         # Response metadata & context
+```
+
+### **Supported Period Formats**
+
+- **Latest**: `'latest'` - Most recent available data
+- **Specific Years**: `'FY2024'`, `'Q1-2024'`, `'Q2-2024'` 
+- **Trend Analysis**: `'last 3 quarters'`, `'last 2 financial years'`
+- **Custom Ranges**: 1-10 periods supported
+
+## 🚀 **Quick Start for AI Agents**
+
+### **1. Financial Metrics Query**
+```python
+# Natural language to structured query
+user_query = "What's Apple's revenue and profit margin for the last year?"
+
+response = get_financial_metrics_for_agent(
+    ticker='AAPL',
+    metrics=['total_revenue', 'net_income', 'net_margin'],
+    period='LTM'
+)
+
+if response.success:
+    data = response.data
+    # Access structured financial data
+    revenue = data['total_revenue']['value']
+    margin = data['net_margin']['value']
+```
+
+### **2. Ratio Analysis**
+```python
+# Comprehensive financial health analysis
+response = get_ratios_for_agent(
+    ticker='AAPL',
+    categories=['profitability', 'liquidity', 'leverage'],
+    period='latest'
+)
+
+# Response includes calculated ratios + explanations
+ratios = response.data['ratios']
+# {'ROE': 0.15, 'ROA': 0.12, 'Current_Ratio': 1.2, ...}
+```
+
+### **3. Company Comparison**
+```python
+# Multi-company competitive analysis
+response = compare_companies_for_agent(
+    tickers=['AAPL', 'MSFT', 'GOOGL'],
+    categories=['profitability', 'efficiency'],
+    period='LTM'
+)
+
+# Returns comparative data + rankings
+comparison = response.data['comparison']
+rankings = response.data['rankings']
+```
+
+## 📊 **Data Coverage & Capabilities**
+
+### **Financial Statements**
+- ✅ **Income Statements**: Revenue, expenses, profitability metrics
+- ✅ **Balance Sheets**: Assets, liabilities, equity positions  
+- ✅ **Cash Flow Statements**: Operating, investing, financing activities
+- ✅ **LTM Calculations**: Rolling 12-month data for trend analysis
+
+### **Financial Ratios (50+ Ratios)**
+- **Profitability**: ROE, ROA, ROIC, Net Margin, EBITDA Margin, Gross Margin
+- **Liquidity**: Current Ratio, Quick Ratio, Cash Ratio, Cash/OpEx Ratio
+- **Leverage**: Debt/Equity, Debt/Assets, Interest Coverage, Debt/EBITDA  
+- **Efficiency**: Asset Turnover, Inventory Turnover, Fixed Asset Turnover
+- **Cash Flow**: Operating Cash Margin, Free Cash Flow Margin, Cash ROA
+- **Growth**: Revenue Growth YoY, EBITDA Growth YoY (with trend analysis)
+
+### **Virtual Fields System**
+Intelligent handling of inconsistent financial reporting:
+
+```python
+# Automatically resolves company-specific reporting differences:
+# - Apple: "sales_general_and_admin" 
+# - Microsoft: "sales_and_marketing" + "general_and_administrative"
+# - System picks best available data source automatically
+```
+
+## ⚡ **Performance & Reliability**
+
+### **Intelligent Caching**
+- ✅ **24-hour automatic cache**: Prevents unnecessary API calls
+- ✅ **Freshness validation**: Auto-refresh stale data
+- ✅ **Database storage**: Persistent LTM and ratio calculations
+
+### **Rate Limiting & Security**
+- ✅ **SEC API compliance**: Respects 10 requests/second limit
+- ✅ **SQL injection protection**: Parameterized queries throughout
+- ✅ **Input validation**: Comprehensive ticker/period validation
+- ✅ **Error handling**: Graceful degradation with detailed error responses
+
+### **LLM Integration**
+- ✅ **OpenRouter integration**: Intelligent field mapping for natural language queries
+- ✅ **Fallback logic**: Works without LLM for core functionality
+- ✅ **Field suggestions**: Helps resolve ambiguous metric names
+
+## 🛠 **Installation & Setup**
+
+### **1. Database Setup**
+```bash
+# PostgreSQL required
+createdb financial_data
+```
+
+### **2. Environment Configuration**
+Create `.env` file:
+```env
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=financial_data
+DB_USER=postgres
+DB_PASSWORD=your_password
+
+# SEC API Configuration  
+SEC_USER_AGENT=YourName your.email@example.com
+
+# Optional: LLM Integration
+OPENROUTER_API_KEY=your_openrouter_key
+```
+
+### **3. Initialize System**
+```python
+from SECFinancialRAG import initialize_default_ratios
+
+# One-time setup: Initialize ratio definitions
 initialize_default_ratios()
+```
 
-# Process company with ratio calculation
-result = process_company_financials('AAPL', calculate_ratios=True)
+## 📝 **Usage Examples**
 
-# Get calculated ratios
-ratios = get_company_ratios('AAPL', category='profitability')
+### **Example 1: Basic Financial Analysis**
+```python
+from SECFinancialRAG import get_financial_data
 
-# Create custom company-specific ratio
+# Get comprehensive financial dataset
+df = get_financial_data('AAPL')
+
+# DataFrame includes:
+# - All LTM income statement and cash flow data
+# - Point-in-time balance sheet data
+# - All calculated financial ratios
+# - Historical data across multiple periods
+```
+
+### **Example 2: Agent-Style Queries**
+```python
+# Revenue trend analysis
+response = get_financial_metrics_for_agent(
+    ticker='AAPL',
+    metrics=['total_revenue'],
+    period='last 4 quarters'
+)
+
+# Financial health assessment
+response = get_ratios_for_agent(
+    ticker='AAPL', 
+    categories=['profitability', 'liquidity'],
+    period='latest'
+)
+
+# Competitive benchmarking
+response = compare_companies_for_agent(
+    tickers=['AAPL', 'MSFT', 'GOOGL'],
+    categories=['profitability'],
+    period='LTM'
+)
+```
+
+### **Example 3: Data Processing Pipeline**
+```python
+from SECFinancialRAG import process_company_financials
+
+# Full processing pipeline
+result = process_company_financials(
+    ticker='AAPL',
+    generate_ltm=True,      # Calculate LTM data
+    calculate_ratios=True,  # Calculate all ratios
+    validate_data=True      # Run data validation
+)
+
+# Automatic caching - subsequent calls use cached data
+# unless data is >24 hours old
+```
+
+## 🔧 **Advanced Configuration**
+
+### **Custom Ratio Definitions**
+```python
+from SECFinancialRAG import create_company_specific_ratio
+
+# Add industry-specific ratios
 create_company_specific_ratio(
     ticker='AAPL',
-    name='Custom_Tech_Ratio',
+    name='R&D_Intensity',
     formula='research_and_development / total_revenue',
-    description='R&D intensity for tech companies',
+    description='R&D spending as % of revenue',
     category='efficiency'
 )
 ```
 
-## Virtual Fields System
-
-Handles inconsistent financial data reporting across companies:
-
+### **Batch Processing**
 ```python
-# Virtual field 'sga_expense' automatically resolves to:
-# 1. sales_general_and_admin (if available - AAPL style)
-# 2. sales_and_marketing + general_and_administrative (MSFT style)  
-# 3. sales_and_marketing (fallback)
-# 4. general_and_administrative (fallback)
+from SECFinancialRAG import get_multiple_companies_data
 
-# Formula simply uses: "sga_expense / total_revenue"
-# System handles the complexity behind the scenes
+# Process multiple companies efficiently
+df_multi = get_multiple_companies_data(['AAPL', 'MSFT', 'GOOGL'])
+
+# Cross-company analysis
+revenue_comparison = df_multi[
+    (df_multi['data_source'] == 'LTM') & 
+    (df_multi['statement_type'] == 'income_statement')
+][['ticker', 'total_revenue', 'net_income']]
 ```
 
-## Database Schema
+## 📚 **Database Schema**
 
-### New Ratio Tables
+### **Core Tables**
+- `companies`: Company master data (CIK, ticker, name)
+- `income_statements`: Income statement data (quarterly, annual)
+- `balance_sheets`: Balance sheet data (point-in-time)
+- `cash_flow_statements`: Cash flow data (quarterly, annual)
 
-- `ratio_definitions`: Stores ratio formulas (global and company-specific)
-- `calculated_ratios`: Stores calculated ratio values with metadata
+### **Enhanced Analytics Tables**
+- `ltm_income_statements`: Last 12 months income data
+- `ltm_cash_flow_statements`: Last 12 months cash flow data
+- `ratio_definitions`: Ratio formulas (global + company-specific)
+- `calculated_ratios`: Computed ratio values with metadata
 
-### Hybrid Support
+### **Key Features**
+- **Automatic LTM calculations**: Stored in database for performance
+- **Hybrid ratio system**: Global + company-specific ratio definitions
+- **Data lineage tracking**: Full audit trail of calculations
+- **Deduplication logic**: Handles multiple filings per period
 
-- `company_id = NULL`: Global ratio (applies to all companies)
-- `company_id = specific_uuid`: Company-specific override
-- Company-specific ratios take precedence over global ones
+## 🎯 **Agent Interface Functions**
 
-## Configuration
+| **Function** | **Purpose** | **Use Case** |
+|--------------|-------------|--------------|
+| `get_financial_metrics_for_agent()` | Core financial data retrieval | Revenue, profit, cash flow analysis |
+| `get_ratios_for_agent()` | Financial ratio analysis | Health, performance, efficiency metrics |
+| `compare_companies_for_agent()` | Multi-company comparison | Competitive analysis, benchmarking |
+| `get_ratio_definition_for_agent()` | Educational content | Ratio explanations, formula details |
+| `get_available_ratio_categories_for_agent()` | Discovery interface | Available analysis types |
 
-Ensure your `.env` file includes database configuration:
+## 🚦 **Error Handling**
 
-```env
-DB_HOST=localhost
-DB_PORT=5433
-DB_NAME=financial_data
-DB_USER=postgres
-DB_PASSWORD=your_password
-SEC_USER_AGENT=your_name your_email
+### **Standardized Error Codes**
+- `INVALID_TICKER`: Ticker format validation failed
+- `DATA_NOT_FOUND`: No financial data available  
+- `INVALID_PERIOD`: Period format not supported
+- `DATABASE_ERROR`: Database operation failed
+- `PROCESSING_ERROR`: SEC data processing failed
+
+### **Example Error Response**
+```python
+{
+    "success": false,
+    "error": {
+        "code": "INVALID_TICKER",
+        "message": "Ticker must be 1-10 characters"
+    },
+    "metadata": {
+        "validation_errors": ["Ticker contains invalid characters"]
+    }
+}
 ```
+
+## 🔍 **Monitoring & Debugging**
+
+### **Logging Configuration**
+```python
+import logging
+
+# Enable detailed logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('SECFinancialRAG')
+```
+
+### **Performance Monitoring**
+- ✅ **Request timing**: All agent calls logged with execution time
+- ✅ **Cache hit rates**: Monitor cache effectiveness
+- ✅ **Database performance**: Query execution times tracked
+- ✅ **API rate limiting**: SEC API usage monitored
+
+## 📈 **Production Readiness**
+
+### **Security Features**
+- ✅ **SQL injection protection**: 100% parameterized queries
+- ✅ **Input validation**: Comprehensive sanitization
+- ✅ **Environment variables**: Secure credential management
+- ✅ **Rate limiting**: API usage compliance
+
+### **Scalability Features**  
+- ✅ **Database optimization**: Proper indexing strategy
+- ✅ **Connection pooling**: Efficient database connections
+- ✅ **Batch operations**: Bulk processing capabilities
+- ✅ **Caching strategy**: Reduces API load
+
+### **Reliability Features**
+- ✅ **Comprehensive error handling**: Graceful failure modes
+- ✅ **Data validation**: Multi-level validation pipeline
+- ✅ **Retry logic**: Automatic SEC API retry on failures
+- ✅ **Fallback mechanisms**: LLM-optional operation
+
+## 🤝 **Contributing**
+
+The module is production-ready and actively maintained. For enhancements or bug reports, please refer to the development guidelines in the project documentation.
+
+## 📄 **License**
+
+This project is part of the PitchBook Generator suite. Please refer to the main project license for usage terms.
+
+---
+
+**Ready for AI Agent Integration** ✅  
+**Production Grade Security** ✅  
+**Comprehensive Financial Coverage** ✅  
+**Intelligent Caching & Performance** ✅

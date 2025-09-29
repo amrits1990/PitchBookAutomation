@@ -16,6 +16,7 @@ US_GAAP_TO_DB_MAPPING = {
     "Revenues": "total_revenue",
     
     "CostOfGoodsAndServicesSold": "cost_of_revenue",
+    "CostOfRevenue": "cost_of_revenue",
 
     "GrossProfit": "gross_profit",
 
@@ -37,6 +38,7 @@ US_GAAP_TO_DB_MAPPING = {
     "IncomeTaxExpenseBenefit": "income_tax_expense",
 
     "NetIncomeLoss": "net_income",
+    "NetIncomeLossAvailableToCommonStockholdersBasic": "net_income",
 
     "EarningsPerShareBasic": "earnings_per_share_basic",
     "EarningsPerShareDiluted": "earnings_per_share_diluted",
@@ -46,14 +48,17 @@ US_GAAP_TO_DB_MAPPING = {
     # Balance Sheet
     "CashAndCashEquivalentsAtCarryingValue": "cash_and_cash_equivalents",
     "MarketableSecuritiesCurrent": "short_term_investments",
+    "CashCashEquivalentsAndShortTermInvestments": "cash_and_short_term_investments",
     "AccountsReceivableNetCurrent": "accounts_receivable",
+    "AccountsAndOtherReceivablesNetCurrent": "accounts_receivable",
+    "ReceivablesNetCurrent": "accounts_receivable",
     "InventoryNet": "inventory",
     "AssetsCurrent": "total_current_assets",
 
     "PropertyPlantAndEquipmentNet": "property_plant_equipment",
     "Goodwill": "goodwill",
     "IntangibleAssetsNetExcludingGoodwill": "intangible_assets",
-    "MarketableSecuritiesNoncurrent": "long_term_investments",
+    # "MarketableSecuritiesNoncurrent": "long_term_investments",
     "OtherAssetsNoncurrent": "other_assets",
     "AssetsNoncurrent": "total_non_current_assets",
     "Assets": "total_assets",
@@ -63,11 +68,13 @@ US_GAAP_TO_DB_MAPPING = {
     "CommercialPaper": "commercial_paper",
     "OtherShortTermBorrowings": "other_short_term_borrowings",
     "LongTermDebtCurrent": "current_portion_long_term_debt",
+    "LongTermDebtAndCapitalLeaseObligationsCurrent": "current_portion_long_term_debt",
     "FinanceLeaseLiabilityCurrent": "finance_lease_liability_current",
     "OperatingLeaseLiabilityCurrent": "operating_lease_liability_current",
     "LiabilitiesCurrent": "total_current_liabilities",
 
     "LongTermDebtNoncurrent": "non_current_long_term_debt",
+    "LongTermDebtAndCapitalLeaseObligations": "non_current_long_term_debt",
     "DebtInstrumentCarryingAmount": "long_term_debt",
     "LongTermDebt": "long_term_debt",
     "FinanceLeaseLiabilityNonCurrent": "finance_lease_liability_noncurrent",
@@ -79,6 +86,7 @@ US_GAAP_TO_DB_MAPPING = {
     "CommonStockValue": "common_stock",
     "RetainedEarningsAccumulatedDeficit": "retained_earnings",
     "AccumulatedOtherComprehensiveIncomeLossNetOfTax": "accumulated_oci",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest": "total_stockholders_equity",
     "StockholdersEquity": "total_stockholders_equity",
     "LiabilitiesAndStockholdersEquity": "total_liabilities_and_equity",
 
@@ -90,9 +98,11 @@ US_GAAP_TO_DB_MAPPING = {
     "AmortizationOfIntangibleAssets": "amortization",
     "ShareBasedCompensation": "stock_based_compensation",
     "IncreaseDecreaseInAccountsReceivable": "changes_in_accounts_receivable",
+    "IncreaseDecreaseInAccountsAndOtherReceivables": "changes_in_accounts_receivable",
     "IncreaseDecreaseInOtherReceivables": "changes_in_other_receivable",
     "IncreaseDecreaseInInventories": "changes_in_inventory",
     "IncreaseDecreaseInAccountsPayable": "changes_in_accounts_payable",
+    "IncreaseDecreaseInAccountsPayableAndAccruedLiabilities": "changes_in_accounts_payable",
     "IncreaseDecreaseInOtherOperatingAssets": "changes_in_other_operating_assets",
     "IncreaseDecreaseInOtherOperatingLiabilities": "changes_in_other_operating_liabilities",
     "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations": "net_cash_from_operating_activities",
@@ -126,6 +136,143 @@ US_GAAP_TO_DB_MAPPING = {
 
 # Combine all mappings
 ALL_GAAP_MAPPINGS = {**US_GAAP_TO_DB_MAPPING}
+
+
+# Computed GAAP Fields - Arithmetic operations on US GAAP codes to create database fields
+# These computations are applied when direct GAAP mapping results in null/missing values
+COMPUTED_GAAP_FIELDS = {
+    # Net PP&E from Gross PP&E - Accumulated Depreciation
+    'property_plant_equipment': [
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['PropertyPlantAndEquipmentGross', 'AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment'],
+            'description': 'Net PP&E = Gross PP&E - Accumulated Depreciation'
+        },
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['PropertyPlantAndEquipmentGross', 'AccumulatedDepreciation'],
+            'description': 'Net PP&E = Gross PP&E - Accumulated Depreciation (alt)'
+        },
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization', 'OperatingLeaseRightOfUseAsset'],
+            'description': 'Net PP&E = PP&E and RoU Assets - RoU Assets (alt)'
+        },
+    ],
+    
+    # Gross Profit from Revenue - COGS
+    'gross_profit': [
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['Revenues', 'CostOfRevenue'],
+            'description': 'Gross Profit = Revenue - COGS'
+        },
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['RevenueFromContractWithCustomerExcludingAssessedTax', 'CostOfGoodsAndServicesSold'],
+            'description': 'Gross Profit = Revenue - COGS (alt)'
+        },
+    ],
+    
+    # Total Operating Expenses from individual expense components
+    'total_operating_expenses': [
+        {
+            'operation': 'add',
+            'gaap_fields': ['ResearchAndDevelopmentExpense', 'SellingGeneralAndAdministrativeExpense'],
+            'description': 'Total OpEx = R&D + SG&A'
+        }
+    ],
+
+    # Total Long Term Debt
+    # 'total_long_term_debt': [
+    #     {
+    #         'operation': 'add',
+    #         'gaap_fields': ['LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths', 'LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo', 
+    #                          'LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree', 'LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour',
+    #                          'LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive', 'LongTermDebtMaturitiesRepaymentsOfPrincipalAfterFiveYears'],
+    #         'description': 'Total OpEx = R&D + SG&A'
+    #     }
+    # ],
+
+    # Long term investments from Marketable Securities + Other Investments
+    'long_term_investments': [
+        {
+            'operation': 'add',
+            'gaap_fields': ['MarketableSecuritiesNoncurrent', 'EquityMethodInvestments', 'OtherLongTermInvestments'],
+            'description': 'Total long term investments = Marketable Securities + Equity Method Investments + Other Long Term Investments'
+        }
+    ],
+    
+    # Depreciation and Amortization from separate components
+    'depreciation_and_amortization': [
+        {
+            'operation': 'add',
+            'gaap_fields': ['Depreciation', 'AmortizationOfIntangibleAssets'],
+            'description': 'Total Depreciation and Amortization = Depreciation + Amortization'
+        },
+        {
+            'operation': 'add',
+            'gaap_fields': ['Depreciation'],
+            'description': 'Total Depreciation and Amortization = Depreciation'
+        }
+    ],
+
+    # Operating Income from Gross Profit - Operating Expenses
+    'operating_income': [
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['GrossProfit', 'OperatingExpenses'],
+            'description': 'Operating Income = Gross Profit - OpEx'
+        },
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['Revenues', 'CostOfRevenue', 'OperatingExpenses'],
+            'description': 'Operating Income = Revenue - COGS - OpEx'
+        },
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['Revenues', 'CostOfGoodsAndServicesSold', 'OperatingExpenses'],
+            'description': 'Operating Income = Revenue - COGS - OpEx'
+        },
+    ],
+    
+    # Net Income from Income Before Tax - Tax Expense
+    'net_income': [
+        {
+            'operation': 'subtract',
+            'gaap_fields': ['IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest', 'IncomeTaxExpenseBenefit'],
+            'description': 'Net Income = Income Before Tax - Tax Expense'
+        },
+    ],
+
+    #Cash and ST Investments
+    'cash_and_short_term_investments': [
+        {
+            'operation': 'add',
+            'gaap_fields': ['CashAndCashEquivalentsAtCarryingValue', 'MarketableSecuritiesCurrent'],
+            'description': 'Cash and ST Investments = Cash + Marketable Securities'
+        },
+    ], 
+
+    #Long Term Debt Total
+    'long_term_debt': [
+        {
+            'operation': 'add',
+            'gaap_fields': ['LongTermDebtAndCapitalLeaseObligations', 'LongTermDebtAndCapitalLeaseObligationsCurrent'],
+            'description': 'Total Long Term Debt = Long Term Debt + Current Portion of Long Term Debt'
+        }
+    ]
+
+}
+
+
+# Supported arithmetic operations
+SUPPORTED_OPERATIONS = {
+    'add': lambda values: sum(values),
+    'subtract': lambda values: values[0] - sum(values[1:]) if len(values) > 1 else values[0],
+    'multiply': lambda values: values[0] * values[1] if len(values) == 2 else None,
+    'divide': lambda values: values[0] / values[1] if len(values) == 2 and values[1] != 0 else None,
+}
 
 
 class FinancialDataMapper:
@@ -235,6 +382,226 @@ class FinancialDataMapper:
         self.mapping[gaap_item] = db_column
         logger.info(f"Added custom mapping: {gaap_item} -> {db_column}")
     
+    def compute_missing_fields(self, facts_dict: Dict[str, any], all_period_facts: Dict[str, any], period_key: str = "") -> Dict[str, any]:
+        """
+        Compute missing database fields using arithmetic operations on already-mapped GAAP fields
+        
+        Args:
+            facts_dict: Dictionary of db_column -> value pairs (after direct mapping)
+            all_period_facts: All facts for the current period that have been processed through mapping
+            period_key: Period identifier for logging purposes
+            
+        Returns:
+            Updated facts_dict with computed values for previously null fields
+        """
+        computed_count = 0
+        
+        for db_column, computations in COMPUTED_GAAP_FIELDS.items():
+            # Only compute if the field is currently missing/null
+            if facts_dict.get(db_column) is not None:
+                continue
+            
+            # Try each computation until we get a valid result
+            for computation in computations:
+                try:
+                    operation = computation['operation']
+                    gaap_fields = computation['gaap_fields']
+                    description = computation.get('description', f"{operation} on {gaap_fields}")
+                    
+                    if operation not in SUPPORTED_OPERATIONS:
+                        logger.warning(f"Unsupported operation '{operation}' for {db_column}")
+                        continue
+                    
+                    # Map GAAP fields to database columns and extract values
+                    values = []
+                    missing_fields = []
+                    
+                    for gaap_field in gaap_fields:
+                        # Map GAAP field to database column
+                        mapped_db_column = self.map_item(gaap_field)
+                        if mapped_db_column and mapped_db_column in all_period_facts:
+                            value = all_period_facts[mapped_db_column]
+                            if value is not None:
+                                values.append(float(value))
+                            else:
+                                missing_fields.append(f"{gaap_field}→{mapped_db_column}")
+                        else:
+                            missing_fields.append(f"{gaap_field}→unmapped")
+                    
+                    # Only compute if we have all required values
+                    if len(values) == len(gaap_fields):
+                        operation_func = SUPPORTED_OPERATIONS[operation]
+                        computed_value = operation_func(values)
+                        
+                        if computed_value is not None:
+                            facts_dict[db_column] = computed_value
+                            computed_count += 1
+                            logger.debug(f"Computed {db_column} = {computed_value:,.0f} using {description} for period {period_key}")
+                            break  # Success - move to next db_column
+                    else:
+                        logger.debug(f"Cannot compute {db_column} for period {period_key}: missing {missing_fields}")
+                        
+                except Exception as e:
+                    logger.debug(f"Error computing {db_column} using {computation.get('description', operation)}: {e}")
+                    continue
+        
+        if computed_count > 0:
+            logger.info(f"Computed {computed_count} missing fields for period {period_key}")
+        
+        return facts_dict
+    
+    def compute_missing_fields_from_raw_gaap(self, facts_dict: Dict[str, any], raw_gaap_facts: Dict[str, any], period_key: str = "") -> Dict[str, any]:
+        """
+        Compute missing database fields using arithmetic operations on raw GAAP facts
+        SIMPLE RULE: Only compute if direct mapping is missing/null. Never overwrite direct mappings.
+        
+        Args:
+            facts_dict: Dictionary of db_column -> value pairs (after direct mapping)
+            raw_gaap_facts: Raw US-GAAP facts data from SEC
+            period_key: Period identifier for logging purposes
+            
+        Returns:
+            Updated facts_dict with computed values for previously null fields
+        """
+        computed_count = 0
+        
+        for db_column, computations in COMPUTED_GAAP_FIELDS.items():
+            # STRICT RULE: Only compute if the field is missing/null - never overwrite existing direct mappings
+            current_value = facts_dict.get(db_column)
+            if current_value is not None:
+                logger.debug(f"Skipping computation for {db_column}: already has direct mapping value {current_value}")
+                continue
+            
+            # Try each computation until we get a valid result
+            for computation in computations:
+                try:
+                    operation = computation['operation']
+                    gaap_fields = computation['gaap_fields']
+                    description = computation.get('description', f"{operation} on {gaap_fields}")
+                    
+                    if operation not in SUPPORTED_OPERATIONS:
+                        logger.warning(f"Unsupported operation '{operation}' for {db_column}")
+                        continue
+                    
+                    # Extract values directly from raw GAAP facts for this period
+                    values = []
+                    missing_fields = []
+                    
+                    for gaap_field in gaap_fields:
+                        value = self._extract_gaap_value(raw_gaap_facts, gaap_field, period_key)
+                        if value is not None:
+                            values.append(float(value))
+                        else:
+                            missing_fields.append(gaap_field)
+                    
+                    # Only compute if we have all required values
+                    if len(values) == len(gaap_fields):
+                        operation_func = SUPPORTED_OPERATIONS[operation]
+                        computed_value = operation_func(values)
+                        
+                        if computed_value is not None:
+                            facts_dict[db_column] = computed_value
+                            # Mark as computed for consolidation priority logic
+                            facts_dict[f"_computed_{db_column}"] = True
+                            computed_count += 1
+                            logger.debug(f"Computed {db_column} = {computed_value:,.0f} using {description} for period {period_key} [MARKED AS COMPUTED]")
+                            break  # Success - move to next db_column
+                    else:
+                        logger.debug(f"Cannot compute {db_column} for period {period_key}: missing {missing_fields}")
+                        
+                except Exception as e:
+                    logger.debug(f"Error computing {db_column} using {computation.get('description', operation)}: {e}")
+                    continue
+        
+        if computed_count > 0:
+            logger.info(f"Computed {computed_count} missing fields for period {period_key}")
+        
+        return facts_dict
+    
+    def _extract_gaap_value(self, gaap_facts: Dict[str, any], gaap_field: str, period_key: str = "") -> Optional[float]:
+        """
+        Extract value for a specific GAAP field from the raw facts data
+        
+        Args:
+            gaap_facts: Raw GAAP facts data
+            gaap_field: GAAP field name to extract
+            period_key: Period identifier for context (format: end_date_filed_date_period_type_length)
+            
+        Returns:
+            Numeric value or None if not found
+        """
+        if gaap_field not in gaap_facts:
+            return None
+        
+        fact_data = gaap_facts[gaap_field]
+        units = fact_data.get('units', {})
+        
+        # Extract period info from period_key for matching
+        # Period key format: end_date_filed_date_period_type_period_length_months
+        period_parts = period_key.split('_') if period_key else []
+        target_end_date = period_parts[0] if len(period_parts) > 0 else None
+        target_filed_date = period_parts[1] if len(period_parts) > 1 else None
+        target_period_type = period_parts[2] if len(period_parts) > 2 else None
+        target_period_length = period_parts[3] if len(period_parts) > 3 else None
+        
+        # Try USD first, then other numeric units
+        for unit_type in ['USD', 'shares', 'pure', 'USD/shares']:
+            if unit_type in units:
+                entries = units[unit_type]
+                if not entries:
+                    continue
+                
+                # If we have period context, try to find matching entry
+                if target_end_date and target_filed_date:
+                    # Look for exact matches with period length consideration
+                    exact_matches = []
+                    for entry in entries:
+                        if (entry.get('end') == target_end_date and 
+                            entry.get('filed') == target_filed_date):
+                            exact_matches.append(entry)
+                    
+                    # If we have multiple matches, try to find the one with matching period length
+                    if len(exact_matches) > 1 and target_period_length:
+                        from dateutil.parser import parse as parse_date
+                        target_length_months = int(target_period_length)
+                        
+                        for entry in exact_matches:
+                            start_date = entry.get('start')
+                            end_date = entry.get('end')
+                            
+                            if start_date and end_date:
+                                try:
+                                    start_obj = parse_date(start_date).date()
+                                    end_obj = parse_date(end_date).date()
+                                    delta_days = (end_obj - start_obj).days
+                                    
+                                    # Convert days to months (approximately)
+                                    actual_months = round(delta_days / 30.44)
+                                    
+                                    # Allow 1 month tolerance for rounding
+                                    if abs(actual_months - target_length_months) <= 1:
+                                        value = entry.get('val')
+                                        if value is not None:
+                                            return float(value)
+                                except:
+                                    continue
+                    
+                    # If no period-length match found, use first exact match
+                    if exact_matches:
+                        value = exact_matches[0].get('val')
+                        if value is not None:
+                            return float(value)
+                    
+                    # Fallback: match just end_date - REMOVED to prevent period length mixing
+                    # This fallback was causing computed values to use wrong period lengths
+                    # For example, 3-month gross profit using 6-month components
+                    # Strict period matching ensures data integrity
+                
+                # Don't use fallback - return None if no period-specific match found
+                # This prevents incorrect historical values from being applied to wrong periods
+        
+        return None
+
     def get_statement_type_from_column(self, db_column: str) -> str:
         """
         Determine statement type from database column
@@ -249,7 +616,7 @@ class FinancialDataMapper:
         income_columns = {
             'total_revenue', 'cost_of_revenue', 'gross_profit',
             'research_and_development', 'sales_and_marketing', 'sales_general_and_admin', 'general_and_administrative',
-            'total_operating_expenses', 'operating_income',
+            'total_operating_expenses', 'operating_income', 'ebitda',
             'interest_income', 'interest_expense', 'other_income', 'income_before_taxes',
             'income_tax_expense', 'net_income', 'earnings_per_share_basic',
             'earnings_per_share_diluted', 'weighted_average_shares_basic',
@@ -258,7 +625,7 @@ class FinancialDataMapper:
         
         # Balance Sheet columns
         balance_sheet_columns = {
-            'cash_and_cash_equivalents', 'short_term_investments', 'accounts_receivable',
+            'cash_and_cash_equivalents', 'short_term_investments', 'cash_and_short_term_investments', 'accounts_receivable',
             'inventory', 'prepaid_expenses', 'total_current_assets', 'total_non_current_assets',
             'property_plant_equipment', 'goodwill', 'intangible_assets',
             'long_term_investments', 'other_assets', 'total_assets',
