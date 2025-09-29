@@ -9,12 +9,28 @@ from typing import Dict, Any, Optional, List
 from abc import ABC, abstractmethod
 
 
+def _get_alpha_vantage_api_key() -> str:
+    """Get Alpha Vantage API key with multiple key support"""
+    # Check for new multiple key format first
+    key1 = os.getenv('ALPHA_VANTAGE_API_KEY_1')
+    key2 = os.getenv('ALPHA_VANTAGE_API_KEY_2')
+    
+    # Return first available key (for configuration validation)
+    if key1:
+        return key1
+    elif key2:
+        return key2
+    else:
+        # Fall back to legacy key for backwards compatibility
+        return os.getenv('ALPHA_VANTAGE_API_KEY', '')
+
+
 @dataclass
 class TranscriptProcessingConfig:
     """Centralized configuration for transcript processing"""
     
-    # API Configuration
-    alpha_vantage_api_key: str = field(default_factory=lambda: os.getenv('ALPHA_VANTAGE_API_KEY', ''))
+    # API Configuration - support multiple keys
+    alpha_vantage_api_key: str = field(default_factory=lambda: _get_alpha_vantage_api_key())
     request_timeout: int = field(default_factory=lambda: int(os.getenv('REQUEST_TIMEOUT', '30')))
     
     # Processing Limits
@@ -56,10 +72,21 @@ class TranscriptProcessingConfig:
     def _validate_required_fields(self):
         """Validate required configuration fields"""
         if not self.alpha_vantage_api_key:
-            raise ValueError("ALPHA_VANTAGE_API_KEY environment variable must be set")
+            # Provide helpful error message for multiple key support
+            key1 = os.getenv('ALPHA_VANTAGE_API_KEY_1')
+            key2 = os.getenv('ALPHA_VANTAGE_API_KEY_2')
+            legacy_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+            
+            if not key1 and not key2 and not legacy_key:
+                raise ValueError(
+                    "Alpha Vantage API key not configured. Set ALPHA_VANTAGE_API_KEY_1 and/or ALPHA_VANTAGE_API_KEY_2 environment variables. "
+                    "Legacy ALPHA_VANTAGE_API_KEY is also supported."
+                )
+            else:
+                raise ValueError("Alpha Vantage API key found but appears to be empty")
         
         if len(self.alpha_vantage_api_key) < 10:
-            raise ValueError("ALPHA_VANTAGE_API_KEY appears to be invalid (too short)")
+            raise ValueError("Alpha Vantage API key appears to be invalid (too short)")
         
     
     def _validate_limits(self):
@@ -234,8 +261,8 @@ def validate_transcript_environment() -> Dict[str, Any]:
             'config': config.to_dict(),
             'environment_variables_found': [
                 key for key in [
-                    'ALPHA_VANTAGE_API_KEY', 'LOG_LEVEL', 'ENVIRONMENT',
-                    'MAX_WORKERS', 'DEFAULT_CHUNK_SIZE', 'ALPHA_VANTAGE_RATE_LIMIT'
+                    'ALPHA_VANTAGE_API_KEY_1', 'ALPHA_VANTAGE_API_KEY_2', 'ALPHA_VANTAGE_API_KEY',
+                    'LOG_LEVEL', 'ENVIRONMENT', 'MAX_WORKERS', 'DEFAULT_CHUNK_SIZE', 'ALPHA_VANTAGE_RATE_LIMIT'
                 ] if os.getenv(key)
             ]
         }
@@ -243,7 +270,7 @@ def validate_transcript_environment() -> Dict[str, Any]:
         return {
             'valid': False,
             'error': str(e),
-            'required_variables': ['ALPHA_VANTAGE_API_KEY'],
+            'required_variables': ['ALPHA_VANTAGE_API_KEY_1 or ALPHA_VANTAGE_API_KEY_2 or ALPHA_VANTAGE_API_KEY'],
             'optional_variables': [
                 'LOG_LEVEL', 'ENVIRONMENT', 'MAX_WORKERS', 
                 'DEFAULT_CHUNK_SIZE', 'DEFAULT_OVERLAP',

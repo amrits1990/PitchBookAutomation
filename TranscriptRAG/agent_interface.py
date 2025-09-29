@@ -290,17 +290,37 @@ def index_transcripts_for_agent(
                 request_id=request_id
             )
         
-        # Check API configuration
-        alpha_vantage_api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-        if not alpha_vantage_api_key:
+        # Check API configuration - support multiple keys
+        api_keys_available = []
+        
+        # Check for new multiple key format
+        key1 = os.getenv("ALPHA_VANTAGE_API_KEY_1")
+        key2 = os.getenv("ALPHA_VANTAGE_API_KEY_2")
+        
+        # Also check legacy format for backwards compatibility
+        legacy_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+        
+        if key1:
+            api_keys_available.append("ALPHA_VANTAGE_API_KEY_1")
+        if key2:
+            api_keys_available.append("ALPHA_VANTAGE_API_KEY_2")
+        if legacy_key and not key1 and not key2:  # Only use legacy if new keys not available
+            api_keys_available.append("ALPHA_VANTAGE_API_KEY")
+        
+        if not api_keys_available:
             return create_agent_response(
                 success=False,
                 function_name=function_name,
                 error_code=ErrorCodes.CONFIG_ERROR,
-                error_message="ALPHA_VANTAGE_API_KEY not configured",
-                error_details={"required_env_var": "ALPHA_VANTAGE_API_KEY"},
+                error_message="Alpha Vantage API key not configured. Set ALPHA_VANTAGE_API_KEY_1 and/or ALPHA_VANTAGE_API_KEY_2",
+                error_details={
+                    "required_env_vars": ["ALPHA_VANTAGE_API_KEY_1", "ALPHA_VANTAGE_API_KEY_2"],
+                    "legacy_support": "ALPHA_VANTAGE_API_KEY"
+                },
                 request_id=request_id
             )
+        
+        logger.info(f"Using {len(api_keys_available)} Alpha Vantage API key(s): {', '.join(api_keys_available)}")
         
         # Calculate start date (simple calculation for quarters back)
         months_back = quarters_back * 3

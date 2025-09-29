@@ -18,11 +18,13 @@ try:
         TranscriptDataSource, TranscriptData, TranscriptQuery, 
         DataSourceError, transcript_registry
     )
+    from .sec_fiscal_info import get_fiscal_info_from_sec
 except ImportError:
     from data_source_interface import (
         TranscriptDataSource, TranscriptData, TranscriptQuery, 
         DataSourceError, transcript_registry
     )
+    from sec_fiscal_info import get_fiscal_info_from_sec
 
 
 class AlphaVantageTranscriptSource(TranscriptDataSource):
@@ -30,18 +32,45 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
     
     def __init__(self, api_key: str = None):
         """
-        Initialize Alpha Vantage transcript source
+        Initialize Alpha Vantage transcript source with multiple API key support
         
         Args:
-            api_key: Alpha Vantage API key (if not provided, uses ALPHA_VANTAGE_API_KEY env var)
+            api_key: Alpha Vantage API key (if not provided, uses ALPHA_VANTAGE_API_KEY_1, ALPHA_VANTAGE_API_KEY_2 env vars)
         """
-        self.api_key = api_key or os.getenv('ALPHA_VANTAGE_API_KEY')
-        if not self.api_key:
+        if api_key:
+            # Single API key provided
+            self.api_keys = [api_key]
+        else:
+            # Try to load multiple API keys from environment
+            self.api_keys = []
+            
+            # Load API keys in order
+            key1 = os.getenv('ALPHA_VANTAGE_API_KEY_1')
+            key2 = os.getenv('ALPHA_VANTAGE_API_KEY_2')
+            
+            # Also check legacy environment variable for backwards compatibility
+            legacy_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+            
+            if key1:
+                self.api_keys.append(key1)
+            if key2:
+                self.api_keys.append(key2)
+            if legacy_key and legacy_key not in self.api_keys:
+                self.api_keys.append(legacy_key)
+        
+        if not self.api_keys:
             raise DataSourceError(
-                "Alpha Vantage API key required. Set ALPHA_VANTAGE_API_KEY environment variable or pass api_key parameter.",
+                "Alpha Vantage API key required. Set ALPHA_VANTAGE_API_KEY_1, ALPHA_VANTAGE_API_KEY_2 environment variables or pass api_key parameter.",
                 error_code="MISSING_API_KEY",
                 source="alpha_vantage"
             )
+        
+        # Current API key being used (starts with first one)
+        self.current_key_index = 0
+        self.api_key = self.api_keys[self.current_key_index]
+        
+        # Track which keys have hit rate limits
+        self.rate_limited_keys = set()
         
         self.base_url = "https://www.alphavantage.co/query"
         
@@ -68,10 +97,62 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
         # Supported date range (Alpha Vantage earnings data typically goes back ~10 years)
         self.earliest_date = datetime(2014, 1, 1)
         self.latest_date = datetime.now()
+        
+        # Log API key setup
+        self.logger.info(f"Initialized with {len(self.api_keys)} API key(s)")
+        print(f"🔑 Alpha Vantage: {len(self.api_keys)} API key(s) available")
+    
+    def _get_masked_key(self, key: str) -> str:
+        """Get masked version of API key for logging"""
+        if len(key) > 8:
+            return f"{key[:4]}...{key[-4:]}"
+        return "***"
+    
+    def _switch_to_next_api_key(self) -> bool:
+        """
+        Switch to the next available API key
+        
+        Returns:
+            True if switched successfully, False if no more keys available
+        """
+        # Mark current key as rate limited
+        current_key = self.api_keys[self.current_key_index]
+        self.rate_limited_keys.add(current_key)
+        
+        # Find next available key
+        for i in range(len(self.api_keys)):
+            next_index = (self.current_key_index + 1 + i) % len(self.api_keys)
+            next_key = self.api_keys[next_index]
+            
+            if next_key not in self.rate_limited_keys:
+                self.current_key_index = next_index
+                self.api_key = next_key
+                
+                masked_old_key = self._get_masked_key(current_key)
+                masked_new_key = self._get_masked_key(next_key)
+                
+                self.logger.info(f"Switched from API key {masked_old_key} to {masked_new_key}")
+                print(f"🔄 Switched to API key: {masked_new_key}")
+                
+                return True
+        
+        # No more available keys
+        self.logger.error("All API keys have hit rate limits")
+        print("🚫 All API keys have hit rate limits")
+        return False
+    
+    def _reset_rate_limited_keys(self):
+        """Reset rate limited keys (can be called after some time has passed)"""
+        self.rate_limited_keys.clear()
+        self.current_key_index = 0
+        self.api_key = self.api_keys[0]
+        
+        self.logger.info("Reset rate limited keys - starting fresh")
+        print("🔄 Reset rate limited keys")
     
     def _make_request(self, params: Dict[str, str]) -> Dict[str, Any]:
         """
-        Make rate-limited request to Alpha Vantage API with detailed logging
+        Make rate-limited request to Alpha Vantage API with detailed logging and automatic API key fallback
         
         Args:
             params: Request parameters
@@ -80,7 +161,7 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
             JSON response as dictionary
             
         Raises:
-            DataSourceError: If request fails
+            DataSourceError: If request fails on all available API keys
         """
         # Log the request being made
         function_name = params.get('function', 'UNKNOWN')
@@ -94,92 +175,150 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
             self.logger.info(f"Making API request: {function_name} for {symbol}")
             print(f"    📡 API Request: {function_name} for {symbol}")
         
-        # Rate limiting with detailed logging
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-        if time_since_last < self.rate_limit_delay:
-            sleep_time = self.rate_limit_delay - time_since_last
-            self.logger.info(f"Rate limiting: Waiting {sleep_time:.1f} seconds (configured delay: {self.rate_limit_delay}s)")
-            print(f"    ⏳ Rate limit delay: {sleep_time:.1f} seconds (configured: {self.rate_limit_delay}s)")
-            time.sleep(sleep_time)
+        # Try the request with current API key, fallback to others if rate limited
+        attempts = 0
+        max_attempts = len(self.api_keys)
         
-        # Add API key to parameters
-        params['apikey'] = self.api_key
-        
-        try:
-            request_start_time = time.time()
-            response = requests.get(self.base_url, params=params, timeout=30)
-            request_end_time = time.time()
+        while attempts < max_attempts:
+            attempts += 1
             
-            response.raise_for_status()
-            
-            self.last_request_time = time.time()
-            
-            # Log response time
-            response_time = request_end_time - request_start_time
-            self.logger.info(f"API response received in {response_time:.2f} seconds")
-            print(f"    ✅ Response received in {response_time:.2f}s")
-            
-            data = response.json()
-            
-            # Check for API errors
-            if "Error Message" in data:
-                error_msg = data['Error Message']
-                self.logger.error(f"Alpha Vantage API error: {error_msg}")
-                print(f"    ❌ API Error: {error_msg}")
-                raise DataSourceError(
-                    f"Alpha Vantage API error: {error_msg}",
-                    error_code="API_ERROR",
-                    source="alpha_vantage"
-                )
-            
-            if "Note" in data:
-                rate_limit_msg = data['Note']
-                # Hide API key from logs for security
-                sanitized_msg = rate_limit_msg.replace(self.api_key, "***API_KEY_HIDDEN***")
-                self.logger.warning(f"Alpha Vantage rate limit: {sanitized_msg}")
-                print(f"    ⚠️ Rate Limit: {sanitized_msg}")
-                raise DataSourceError(
-                    f"Alpha Vantage rate limit exceeded (API key hidden for security)",
-                    error_code="RATE_LIMIT",
-                    source="alpha_vantage"
-                )
-            
-            # Check for rate limit via "Information" field (daily limit exhausted)
-            if "Information" in data and "rate limit" in data["Information"].lower():
-                rate_limit_msg = data['Information']
-                # Hide API key from logs for security
-                sanitized_msg = rate_limit_msg.replace(self.api_key, "***API_KEY_HIDDEN***")
-                self.logger.warning(f"Alpha Vantage daily rate limit exhausted: {sanitized_msg}")
-                print(f"    🚫 Daily Rate Limit Exhausted: {sanitized_msg}")
-                raise DataSourceError(
-                    f"Alpha Vantage daily rate limit exhausted (API key hidden for security)",
-                    error_code="DAILY_RATE_LIMIT",
-                    source="alpha_vantage"
-                )
-            
-            # Log successful data retrieval
-            if 'transcript' in data and isinstance(data['transcript'], list):
-                transcript_count = len(data['transcript'])
-                self.logger.info(f"Successfully retrieved transcript with {transcript_count} entries")
-                print(f"    📄 Transcript data: {transcript_count} entries")
-            elif 'symbol' in data and function_name == 'OVERVIEW':
-                self.logger.info(f"Successfully retrieved company overview for {symbol}")
-                print(f"    🏢 Company overview retrieved for {symbol}")
+            # Show which API key we're using
+            masked_key = self._get_masked_key(self.api_key)
+            if attempts > 1:
+                print(f"    🔄 Trying API key: {masked_key} (attempt {attempts})")
             else:
-                self.logger.info("API request successful - response structure unknown")
-                print(f"    ✅ API request successful")
+                print(f"    🔑 Using API key: {masked_key}")
             
-            return data
-            
-        except requests.RequestException as e:
-            self.logger.error(f"Network error during API request: {str(e)}")
-            print(f"    🌐 Network Error: {str(e)}")
-            raise DataSourceError(
-                f"Failed to fetch data from Alpha Vantage: {str(e)}",
-                error_code="NETWORK_ERROR",
-                source="alpha_vantage"
-            )
+            try:
+                # Rate limiting with detailed logging
+                current_time = time.time()
+                time_since_last = current_time - self.last_request_time
+                if time_since_last < self.rate_limit_delay:
+                    sleep_time = self.rate_limit_delay - time_since_last
+                    self.logger.info(f"Rate limiting: Waiting {sleep_time:.1f} seconds (configured delay: {self.rate_limit_delay}s)")
+                    print(f"    ⏳ Rate limit delay: {sleep_time:.1f} seconds")
+                    time.sleep(sleep_time)
+                
+                # Add API key to parameters
+                params_with_key = params.copy()
+                params_with_key['apikey'] = self.api_key
+                
+                request_start_time = time.time()
+                response = requests.get(self.base_url, params=params_with_key, timeout=30)
+                request_end_time = time.time()
+                
+                response.raise_for_status()
+                
+                self.last_request_time = time.time()
+                
+                # Log response time
+                response_time = request_end_time - request_start_time
+                self.logger.info(f"API response received in {response_time:.2f} seconds")
+                print(f"    ✅ Response received in {response_time:.2f}s")
+                
+                data = response.json()
+                
+                # Check for API errors (non-rate-limit errors)
+                if "Error Message" in data:
+                    error_msg = data['Error Message']
+                    self.logger.error(f"Alpha Vantage API error: {error_msg}")
+                    print(f"    ❌ API Error: {error_msg}")
+                    raise DataSourceError(
+                        f"Alpha Vantage API error: {error_msg}",
+                        error_code="API_ERROR",
+                        source="alpha_vantage"
+                    )
+                
+                # Check for rate limit (try next API key)
+                if "Note" in data:
+                    rate_limit_msg = data['Note']
+                    sanitized_msg = rate_limit_msg.replace(self.api_key, "***API_KEY_HIDDEN***")
+                    self.logger.warning(f"Alpha Vantage rate limit on key {masked_key}: {sanitized_msg}")
+                    print(f"    ⚠️ Rate Limit on {masked_key}: {sanitized_msg}")
+                    
+                    # Try to switch to next API key
+                    if self._switch_to_next_api_key():
+                        continue  # Try again with next key
+                    else:
+                        # All keys exhausted
+                        raise DataSourceError(
+                            f"All Alpha Vantage API keys have hit rate limits. Please wait and try again later.",
+                            error_code="ALL_KEYS_RATE_LIMITED",
+                            source="alpha_vantage"
+                        )
+                
+                # Check for daily rate limit (try next API key)
+                if "Information" in data and "rate limit" in data["Information"].lower():
+                    rate_limit_msg = data['Information']
+                    sanitized_msg = rate_limit_msg.replace(self.api_key, "***API_KEY_HIDDEN***")
+                    self.logger.warning(f"Alpha Vantage daily rate limit on key {masked_key}: {sanitized_msg}")
+                    print(f"    🚫 Daily Rate Limit on {masked_key}: {sanitized_msg}")
+                    
+                    # Try to switch to next API key
+                    if self._switch_to_next_api_key():
+                        continue  # Try again with next key
+                    else:
+                        # All keys exhausted
+                        raise DataSourceError(
+                            f"All Alpha Vantage API keys have hit daily rate limits. Please wait 24 hours and try again.",
+                            error_code="ALL_KEYS_DAILY_RATE_LIMITED",
+                            source="alpha_vantage"
+                        )
+                
+                # Successful response - log and return
+                if 'transcript' in data and isinstance(data['transcript'], list):
+                    transcript_count = len(data['transcript'])
+                    self.logger.info(f"Successfully retrieved transcript with {transcript_count} entries using key {masked_key}")
+                    print(f"    📄 Transcript data: {transcript_count} entries")
+                elif 'symbol' in data and function_name == 'OVERVIEW':
+                    self.logger.info(f"Successfully retrieved company overview for {symbol} using key {masked_key}")
+                    print(f"    🏢 Company overview retrieved for {symbol}")
+                else:
+                    self.logger.info(f"API request successful using key {masked_key}")
+                    print(f"    ✅ API request successful")
+                
+                return data
+                
+            except requests.exceptions.RequestException as e:
+                # Network/HTTP errors - don't try other keys for these
+                self.logger.error(f"Request error: {e}")
+                print(f"    🌐 Network Error: {e}")
+                raise DataSourceError(
+                    f"Request failed: {str(e)}",
+                    error_code="NETWORK_ERROR",
+                    source="alpha_vantage"
+                )
+            except DataSourceError as e:
+                # Rate limit errors are handled above, other DataSourceErrors should be re-raised
+                if e.error_code in ["RATE_LIMIT", "DAILY_RATE_LIMIT"]:
+                    # This shouldn't happen as we handle rate limits above, but just in case
+                    if self._switch_to_next_api_key():
+                        continue
+                    else:
+                        raise DataSourceError(
+                            f"All Alpha Vantage API keys exhausted",
+                            error_code="ALL_KEYS_EXHAUSTED", 
+                            source="alpha_vantage"
+                        )
+                else:
+                    # Non-rate-limit errors (API_ERROR, etc.) - don't try other keys
+                    raise
+            except Exception as e:
+                # Unexpected errors
+                self.logger.error(f"Unexpected error: {e}")
+                print(f"    💥 Unexpected Error: {e}")
+                raise DataSourceError(
+                    f"Unexpected error: {str(e)}",
+                    error_code="UNEXPECTED_ERROR",
+                    source="alpha_vantage"
+                )
+        
+        # This should never be reached due to the logic above, but just in case
+        raise DataSourceError(
+            f"Request failed after trying all {max_attempts} API keys",
+            error_code="ALL_KEYS_FAILED",
+            source="alpha_vantage"
+        )
     
     def _parse_transcript_data(self, data: Dict[str, Any], ticker: str, quarter: str) -> Optional[TranscriptData]:
         """
@@ -371,15 +510,49 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
     
     def _get_fiscal_info(self, ticker: str) -> Dict[str, str]:
         """
-        Get fiscal year end and latest quarter info from Alpha Vantage OVERVIEW API
+        Get fiscal info using SEC data as primary, Alpha Vantage as fallback
         
         Args:
             ticker: Company ticker symbol
             
         Returns:
-            Dictionary with 'fiscal_year_end' and 'latest_quarter' keys
+            Dictionary with fiscal info. For SEC: includes 'latest_quarter_str' (e.g. '2025Q3')
+            For Alpha Vantage: includes 'fiscal_year_end' and 'latest_quarter' for complex calculation
         """
+        # Try SEC approach first
         try:
+            self.logger.info(f"Attempting to get fiscal info for {ticker} using SEC data...")
+            sec_info = get_fiscal_info_from_sec(ticker)
+            
+            if sec_info and sec_info.get('end') and sec_info.get('fy') and sec_info.get('fp'):
+                # SEC gives us direct quarter info
+                fy = sec_info['fy']
+                fp = sec_info['fp']
+                end_date = sec_info['end']
+                
+                # Convert FY to Q4 if needed
+                if fp == 'FY':
+                    fp = 'Q4'
+                
+                # Create the quarter string directly (e.g., "2025Q3")
+                latest_quarter_str = f"{fy}{fp}"
+                
+                self.logger.info(f"SEC fiscal info for {ticker}: latest_quarter_str={latest_quarter_str}, end_date={end_date}")
+                
+                return {
+                    'latest_quarter_str': latest_quarter_str,
+                    'latest_quarter': end_date,  # Keep for compatibility 
+                    'source': 'SEC'
+                }
+            else:
+                self.logger.warning(f"SEC data incomplete for {ticker}, falling back to Alpha Vantage")
+                
+        except Exception as e:
+            self.logger.warning(f"SEC fiscal info failed for {ticker}: {e}, falling back to Alpha Vantage")
+        
+        # Fallback to Alpha Vantage approach
+        try:
+            self.logger.info(f"Using Alpha Vantage fiscal info for {ticker}")
             params = {
                 'function': 'OVERVIEW',
                 'symbol': ticker.upper()
@@ -398,16 +571,21 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
             if fiscal_year_end not in valid_months:
                 fiscal_year_end = 'December'  # Default fallback
             
+            self.logger.info(f"Alpha Vantage fiscal info for {ticker}: fiscal_year_end={fiscal_year_end}, latest_quarter={latest_quarter}")
+            
             return {
                 'fiscal_year_end': fiscal_year_end,
-                'latest_quarter': latest_quarter
+                'latest_quarter': latest_quarter,
+                'source': 'AlphaVantage'
             }
                 
         except DataSourceError:
             # If we can't get fiscal info, default to calendar year
+            self.logger.warning(f"Both SEC and Alpha Vantage failed for {ticker}, using defaults")
             return {
                 'fiscal_year_end': 'December',
-                'latest_quarter': ''
+                'latest_quarter': '',
+                'source': 'Default'
             }
     
     def _get_fiscal_year_end(self, ticker: str) -> str:
@@ -479,7 +657,7 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
     
     def _get_recent_quarters_sequence(self, ticker: str, quarters_back: int) -> List[str]:
         """
-        Get the sequence of recent fiscal quarters using LatestQuarter from overview API
+        Get the sequence of recent fiscal quarters using SEC data (primary) or Alpha Vantage (fallback)
         
         Args:
             ticker: Company ticker symbol
@@ -490,6 +668,14 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
         """
         try:
             fiscal_info = self._get_fiscal_info(ticker)
+            
+            # Check if we have SEC data (simple path)
+            if fiscal_info.get('source') == 'SEC' and fiscal_info.get('latest_quarter_str'):
+                self.logger.info(f"Using SEC data for {ticker} quarter sequence")
+                return self._generate_quarters_from_sec(fiscal_info['latest_quarter_str'], quarters_back)
+            
+            # Otherwise use Alpha Vantage data (complex path)
+            self.logger.info(f"Using Alpha Vantage data for {ticker} quarter sequence")
             latest_quarter_date = fiscal_info['latest_quarter']
             
             if not latest_quarter_date:
@@ -537,6 +723,53 @@ class AlphaVantageTranscriptSource(TranscriptDataSource):
         except Exception as e:
             self.logger.error(f"Error generating recent quarters for {ticker}: {e}")
             return self._generate_quarters_fallback(ticker, quarters_back)
+    
+    def _generate_quarters_from_sec(self, latest_quarter_str: str, quarters_back: int) -> List[str]:
+        """
+        Generate quarter sequence from SEC data (simple path)
+        
+        Args:
+            latest_quarter_str: Latest quarter in format "2025Q3"
+            quarters_back: Number of quarters to go back
+            
+        Returns:
+            List of quarter strings in format ['2025Q3', '2025Q2', '2025Q1'] (most recent first)
+        """
+        try:
+            # Parse the latest quarter string (e.g., "2025Q3")
+            year_str, quarter_str = latest_quarter_str.split('Q')
+            current_year = int(year_str)
+            current_quarter = int(quarter_str)
+            
+            self.logger.info(f"SEC latest quarter: {current_year}Q{current_quarter}")
+            print(f"🎯 SEC latest quarter: {current_year}Q{current_quarter}")
+            
+            # Generate sequence going backwards
+            quarters = []
+            for i in range(quarters_back):
+                quarters.append(f"{current_year}Q{current_quarter}")
+                
+                # Move to previous quarter
+                current_quarter -= 1
+                if current_quarter < 1:
+                    current_quarter = 4
+                    current_year -= 1
+            
+            self.logger.info(f"Generated SEC quarter sequence: {quarters}")
+            print(f"📋 SEC quarter sequence: {quarters}")
+            
+            return quarters
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing SEC quarter string '{latest_quarter_str}': {e}")
+            # Fallback to default calendar quarters
+            current_date = datetime.now()
+            quarters = []
+            for i in range(quarters_back):
+                quarter_num = ((current_date.month - 1) // 3) + 1
+                quarters.append(f"{current_date.year}Q{quarter_num}")
+                current_date = current_date - timedelta(days=90)  # Approximate quarter
+            return quarters
     
     def _generate_quarters_fallback(self, ticker: str, quarters_back: int) -> List[str]:
         """Fallback method for quarter generation when LatestQuarter is not available"""
