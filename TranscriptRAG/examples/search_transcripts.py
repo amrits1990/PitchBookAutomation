@@ -269,7 +269,17 @@ def interactive_search():
             print("  2. Use quarters back (legacy)")
             print("  3. Search all quarters")
             
-            choice = input("Selection (1-3, default 1): ").strip() or "1"
+            choice_input = input("Selection (1-3, default 1): ").strip()
+            
+            # Handle case where user directly enters quarter instead of choice number
+            if choice_input and choice_input.upper().startswith('Q') and ' ' in choice_input:
+                # User entered something like "Q3 2025" - treat as choice 1 and set quarter
+                choice = "1"
+                # Set the quarter_input for later use
+                direct_quarter_input = choice_input
+            else:
+                choice = choice_input or "1"
+                direct_quarter_input = None
             
             if choice == "1":
                 # Let user select specific quarters
@@ -277,7 +287,12 @@ def interactive_search():
                 for i, quarter in enumerate(available_quarters[:10], 1):  # Show up to 10
                     print(f"  {i}. {quarter}")
                 
-                quarter_input = input("Select quarters (comma-separated numbers, e.g., '1,2,3', or direct quarters like 'Q3 2025', or 'all'): ").strip()
+                # Use direct quarter input if user entered it in choice prompt, otherwise ask
+                if direct_quarter_input:
+                    quarter_input = direct_quarter_input
+                    print(f"Using quarter from your input: {quarter_input}")
+                else:
+                    quarter_input = input("Select quarters (comma-separated numbers, e.g., '1,2,3', or direct quarters like 'Q3 2025', or 'all'): ").strip()
                 
                 if quarter_input.lower() == 'all':
                     selected_quarters = available_quarters

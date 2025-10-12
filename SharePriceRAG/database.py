@@ -33,91 +33,209 @@ class SharePriceDatabase:
         """Context manager for database connections"""
         conn = None
         try:
+            # Check if we have required credentials
+            if not self.config.db_password or str(self.config.db_password).strip() == "":
+                error_msg = "Database password not configured. Set POSTGRES_PASSWORD environment variable."
+                self.logger.warning(error_msg)
+                raise ConnectionError(error_msg)
+
+            # Debug: Log connection attempt (without password)
+            self.logger.debug(f"Attempting database connection to {self.config.db_host}:{self.config.db_port}/{self.config.db_name} as {self.config.db_user}")
+
             conn = psycopg2.connect(
                 host=self.config.db_host,
                 port=self.config.db_port,
                 database=self.config.db_name,
                 user=self.config.db_user,
                 password=self.config.db_password,
-                cursor_factory=RealDictCursor
+                cursor_factory=RealDictCursor,
+                connect_timeout=5  # 5 second timeout
             )
             yield conn
-        except Exception as e:
-            self.logger.error(f"Database connection error: {e}")
+        except ConnectionError:
+            # Re-raise our custom ConnectionError
             raise
+        except psycopg2.OperationalError as e:
+            error_msg = f"PostgreSQL connection failed: {str(e)}"
+            self.logger.warning(error_msg)
+            self.logger.info("SharePriceRAG database is not available. System will continue without it.")
+            raise ConnectionError(error_msg) from e
+        except Exception as e:
+            error_msg = f"Unexpected database error: {type(e).__name__}: {str(e)}"
+            self.logger.error(error_msg)
+            raise ConnectionError(error_msg) from e
         finally:
             if conn:
-                conn.close()
+                try:
+                    conn.close()
+                except:
+                    pass  # Ignore errors when closing
                 
     def initialize_database(self) -> bool:
-        """Create tables if they don't exist"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Create main price data table
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS share_prices (
-                        id SERIAL PRIMARY KEY,
-                        ticker VARCHAR(20) NOT NULL,
-                        date DATE NOT NULL,
-                        open_price DECIMAL(12,4),
-                        high_price DECIMAL(12,4),
-                        low_price DECIMAL(12,4),
-                        close_price DECIMAL(12,4) NOT NULL,
-                        adjusted_close DECIMAL(12,4),
-                        volume BIGINT,
-                        source VARCHAR(50) NOT NULL DEFAULT 'unknown',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(ticker, date)
-                    )
-                """)
-                
-                # Create indexes for better performance
-                cursor.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_share_prices_ticker 
-                    ON share_prices(ticker)
-                """)
-                
-                cursor.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_share_prices_date 
-                    ON share_prices(date)
-                """)
-                
-                cursor.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_share_prices_ticker_date 
-                    ON share_prices(ticker, date)
-                """)
-                
-                # Create trigger for updated_at
-                cursor.execute("""
-                    CREATE OR REPLACE FUNCTION update_updated_at_column()
-                    RETURNS TRIGGER AS $$
-                    BEGIN
-                        NEW.updated_at = CURRENT_TIMESTAMP;
-                        RETURN NEW;
-                    END;
-                    $$ language 'plpgsql'
-                """)
-                
-                cursor.execute("""
-                    DROP TRIGGER IF EXISTS update_share_prices_updated_at ON share_prices
-                """)
-                
-                cursor.execute("""
-                    CREATE TRIGGER update_share_prices_updated_at 
-                    BEFORE UPDATE ON share_prices 
-                    FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column()
-                """)
-                
-                conn.commit()
-                self.logger.info("Database initialized successfully")
-                return True
-                
-        except Exception as e:
-            self.logger.error(f"Database initialization error: {e}")
-            return False
+        """Create tables if they don't exist (with concurrency protection)"""
+        import time
+
+        # Try up to 3 times with exponential backoff
+        for attempt in range(3):
+            try:
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+
+                    # Use advisory lock to prevent concurrent initialization
+                    # Lock ID: hash of 'share_prices_init' to get a unique integer
+                    lock_id = abs(hash('share_prices_init')) % (2**31)
+
+                    self.logger.debug(f"Attempting to acquire advisory lock (attempt {attempt + 1}/3)")
+
+                    # Try to acquire advisory lock (non-blocking)
+                    cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
+                    result = cursor.fetchone()
+                    lock_acquired = result['pg_try_advisory_lock'] if result else False
+
+                    if not lock_acquired:
+                        self.logger.info("Another process is initializing database, waiting...")
+                        conn.rollback()  # Release any locks
+
+                        # Check if tables already exist (initialization might be done by other process)
+                        cursor.execute("""
+                            SELECT EXISTS (
+                                SELECT FROM information_schema.tables
+                                WHERE table_name = 'share_prices'
+                            ) as exists
+                        """)
+                        result = cursor.fetchone()
+                        table_exists = result['exists'] if result else False
+
+                        if table_exists:
+                            self.logger.info("Database already initialized by another process")
+                            return True
+
+                        # Wait and retry
+                        time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                        continue
+
+                    try:
+                        # Check if table already exists
+                        cursor.execute("""
+                            SELECT EXISTS (
+                                SELECT FROM information_schema.tables
+                                WHERE table_name = 'share_prices'
+                            ) as exists
+                        """)
+                        result = cursor.fetchone()
+                        table_exists = result['exists'] if result else False
+
+                        if table_exists:
+                            self.logger.info("Database tables already exist")
+                            cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+                            conn.commit()
+                            return True
+
+                        # Create main price data table
+                        cursor.execute("""
+                            CREATE TABLE IF NOT EXISTS share_prices (
+                                id SERIAL PRIMARY KEY,
+                                ticker VARCHAR(20) NOT NULL,
+                                date DATE NOT NULL,
+                                open_price DECIMAL(12,4),
+                                high_price DECIMAL(12,4),
+                                low_price DECIMAL(12,4),
+                                close_price DECIMAL(12,4) NOT NULL,
+                                adjusted_close DECIMAL(12,4),
+                                volume BIGINT,
+                                source VARCHAR(50) NOT NULL DEFAULT 'unknown',
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                UNIQUE(ticker, date)
+                            )
+                        """)
+
+                        # Create indexes for better performance
+                        cursor.execute("""
+                            CREATE INDEX IF NOT EXISTS idx_share_prices_ticker
+                            ON share_prices(ticker)
+                        """)
+
+                        cursor.execute("""
+                            CREATE INDEX IF NOT EXISTS idx_share_prices_date
+                            ON share_prices(date)
+                        """)
+
+                        cursor.execute("""
+                            CREATE INDEX IF NOT EXISTS idx_share_prices_ticker_date
+                            ON share_prices(ticker, date)
+                        """)
+
+                        # Create function for updated_at trigger
+                        cursor.execute("""
+                            CREATE OR REPLACE FUNCTION update_updated_at_column()
+                            RETURNS TRIGGER AS $$
+                            BEGIN
+                                NEW.updated_at = CURRENT_TIMESTAMP;
+                                RETURN NEW;
+                            END;
+                            $$ language 'plpgsql'
+                        """)
+
+                        # Drop and recreate trigger (idempotent)
+                        cursor.execute("""
+                            DROP TRIGGER IF EXISTS update_share_prices_updated_at ON share_prices
+                        """)
+
+                        cursor.execute("""
+                            CREATE TRIGGER update_share_prices_updated_at
+                            BEFORE UPDATE ON share_prices
+                            FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column()
+                        """)
+
+                        # Release advisory lock
+                        cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+
+                        conn.commit()
+                        self.logger.info("Database initialized successfully")
+                        return True
+
+                    except Exception as inner_e:
+                        # Release lock on error
+                        try:
+                            cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+                            conn.rollback()
+                        except:
+                            pass
+                        raise inner_e
+
+            except psycopg2.extensions.TransactionRollbackError as e:
+                # Deadlock or serialization failure - retry
+                self.logger.warning(f"Transaction conflict during initialization (attempt {attempt + 1}/3): {e}")
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    self.logger.error(f"Failed to initialize database after {attempt + 1} attempts")
+                    return False
+
+            except ConnectionError as e:
+                # Database credentials not configured - log warning and fail gracefully
+                self.logger.warning(f"Database not configured: {e}")
+                self.logger.info("SharePriceRAG will not be available. Configure POSTGRES_PASSWORD to enable it.")
+                return False
+
+            except psycopg2.OperationalError as e:
+                # Database server not available - log warning and fail gracefully
+                self.logger.warning(f"Database server not available: {e}")
+                self.logger.info("SharePriceRAG will not be available. Ensure PostgreSQL is running and accessible.")
+                return False
+
+            except Exception as e:
+                self.logger.error(f"Database initialization error: {e}")
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return False
+
+        self.logger.error("Failed to initialize database after all retry attempts")
+        return False
     
     def get_existing_data(self, query: PriceQuery) -> List[PriceData]:
         """Get existing price data for the query"""

@@ -46,15 +46,19 @@ ENABLE_VECTOR_CACHE = os.getenv("ANNUAL_RAG_ENABLE_VECTOR_CACHE", "true").lower(
 try:
     from .enhanced_get_filing_chunks import get_filing_chunks_with_cleanup as get_filing_chunks_api
     from .filing_manager import FilingManager
+    from .fiscal_year_corrector import get_time_filters_for_search, CompanyFactsHandler
 except Exception:  # pragma: no cover
     # Fallback import path if relative import fails in ad-hoc runs
     try:
         from enhanced_get_filing_chunks import get_filing_chunks_with_cleanup as get_filing_chunks_api
         from filing_manager import FilingManager
+        from fiscal_year_corrector import get_time_filters_for_search, CompanyFactsHandler
     except ImportError:
         # Final fallback to original function
         from get_filing_chunks import get_filing_chunks_api  # type: ignore
         FilingManager = None
+        get_time_filters_for_search = None
+        CompanyFactsHandler = None
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +118,7 @@ def index_reports_for_agent(ticker: str, years_back: int = 2,
         print(f"📋 Looking for {', '.join(filing_types)} reports for {ticker.upper()} in this timeframe...")
         
         # Check cache first (unless force_refresh=True)
+        print(f"🔧 Cache check conditions: force_refresh={force_refresh}, VECTOR_DB_AVAILABLE={VECTOR_DB_AVAILABLE}, ENABLE_VECTOR_CACHE={ENABLE_VECTOR_CACHE}")
         if not force_refresh and VECTOR_DB_AVAILABLE and ENABLE_VECTOR_CACHE:
             print(f"🔍 Checking vector database for existing {ticker} reports...")
             cache_result = _check_existing_reports_in_vector_db(
@@ -131,6 +136,26 @@ def index_reports_for_agent(ticker: str, years_back: int = 2,
                     print(f"   ✅ {form_type}: {', '.join(years)} (cached)")
                 print(f"   📊 Total cached chunks: {cache_info.get('total_cached_chunks', 0)}")
                 logger.info(f"Cache hit: Found existing reports for {ticker} in vector DB")
+                
+                # Cleanup temporary files even during cache hits
+                if ENABLE_AUTO_CLEANUP:
+                    try:
+                        # Note: We pass empty filings_used since no new processing occurred
+                        cleanup_result = _cleanup_processed_files_after_indexing(
+                            ticker=ticker,
+                            filings_used=[],
+                            years_back=years_back
+                        )
+                        cache_result["auto_cleanup"] = cleanup_result
+                        if cleanup_result.get("files_removed", 0) > 0:
+                            files_removed = cleanup_result['files_removed']
+                            size_freed = cleanup_result.get('size_freed_mb', 0)
+                            print(f"🧹 Auto-cleanup (cache hit): Removed {files_removed} temp files, freed {size_freed:.1f}MB")
+                            logger.info(f"Auto-cleanup (cache hit): Removed {files_removed} temporary files")
+                    except Exception as e:
+                        logger.warning(f"Auto-cleanup failed during cache hit: {e}")
+                        cache_result["auto_cleanup"] = {"success": False, "error": str(e)}
+                
                 # Add vector_storage status for cache hits
                 cache_result["vector_storage"] = {
                     "success": True,
@@ -231,6 +256,51 @@ def index_reports_for_agent(ticker: str, years_back: int = 2,
         
         # ---- Enhancements: metadata enrichment & dual granularity ----
         enriched_chunks = _enrich_and_expand_chunks(chunks, ticker)
+        
+        # Check if all filings were deduplicated (no new content to process)
+        if len(enriched_chunks) == 0 and original_filing_count > 0:
+            print(f"📋 ALL FILINGS DEDUPLICATED: All {original_filing_count} filings already exist in vector DB")
+            
+            # Cleanup temporary files since no new processing is needed
+            if ENABLE_AUTO_CLEANUP:
+                try:
+                    cleanup_result = _cleanup_processed_files_after_indexing(
+                        ticker=ticker,
+                        filings_used=[],  # No new filings processed
+                        years_back=years_back
+                    )
+                    if cleanup_result.get("files_removed", 0) > 0:
+                        files_removed = cleanup_result['files_removed']
+                        size_freed = cleanup_result.get('size_freed_mb', 0)
+                        print(f"🧹 Auto-cleanup (deduplication): Removed {files_removed} temp files, freed {size_freed:.1f}MB")
+                        logger.info(f"Auto-cleanup (deduplication): Removed {files_removed} temporary files")
+                except Exception as e:
+                    logger.warning(f"Auto-cleanup failed during deduplication: {e}")
+            
+            # Return result indicating successful deduplication
+            return {
+                "success": True,
+                "ticker": ticker.upper(),
+                "chunk_count": 0,
+                "filings_used": [],
+                "chunks": [],
+                "vector_storage": {
+                    "success": True,
+                    "source": "deduplication_skip",
+                    "message": "All filings already exist in vector database"
+                },
+                "metadata": {
+                    "generated_at": datetime.now().isoformat(),
+                    "years_back": years_back,
+                    "filing_types": filing_types,
+                    "data_source": "deduplication_skip",
+                    "cache_info": {
+                        "all_filings_deduplicated": True,
+                        "original_filing_count": original_filing_count,
+                        "chunks_skipped": dedup_stats.get("chunks_skipped", 0) if 'dedup_stats' in locals() else 0
+                    }
+                }
+            }
         
         result = {
             "success": True, 
@@ -382,10 +452,32 @@ def index_reports_for_agent(ticker: str, years_back: int = 2,
 
 
 def search_report_for_agent(ticker: str, query: str, k: int = 20, filters: Optional[Dict[str, Any]] = None,
-                          years_back: int = 2, filing_types: Optional[List[str]] = None,
+                          time_period: str = "latest", years_back: int = 2, filing_types: Optional[List[str]] = None,
                           enable_llm_refinement: bool = True, refinement_model: Optional[str] = None,
                           fallback_to_api_on_empty: bool = False) -> Dict[str, Any]:
-    """Search annual reports using vector database with hybrid search and metadata filtering"""
+    """Search annual reports using vector database with hybrid search and metadata filtering
+    
+    Args:
+        ticker: Company ticker symbol (1-5 alphabetic characters)
+        query: Search query string
+        k: Number of results to return (default 20)
+        filters: Additional metadata filters
+        time_period: Time period constraint. Options:
+            - "latest": Most recent single report (10-K or 10-Q, whichever is newer by end date)
+            - "latest_10k_and_10q": Most recent 10-K and 10-Q reports (both)
+            - "latest_10k": Most recent 10-K only
+            - "latest_10q": Most recent 10-Q only  
+            - "last_n_reports": Last N reports (default N=4)
+            - "last_N_reports": Last N reports (e.g., "last_3_reports", "last_5_reports")
+        years_back: Years to look back (for fallback API calls)
+        filing_types: Filing types to include
+        enable_llm_refinement: Whether to use LLM for query refinement
+        refinement_model: Model to use for refinement
+        fallback_to_api_on_empty: Whether to download new reports if none found
+        
+    Returns:
+        Dict containing search results and metadata
+    """
     try:
         # Input validation for security
         if not ticker or not isinstance(ticker, str):
@@ -401,6 +493,15 @@ def search_report_for_agent(ticker: str, query: str, k: int = 20, filters: Optio
         query = query.strip()
         if len(query) > 1000:  # Reasonable query length limit
             return _error("query must be less than 1000 characters")
+        
+        # Validate time_period parameter
+        import re
+        valid_time_periods = ["latest", "latest_10k_and_10q", "latest_10k", "latest_10q", "last_n_reports"]
+        # Also accept last_N_reports pattern (e.g., last_3_reports, last_5_reports)
+        last_n_pattern = re.compile(r'^last_\d+_reports$')
+        
+        if time_period not in valid_time_periods and not last_n_pattern.match(time_period):
+            return _error(f"time_period must be one of: {valid_time_periods} or 'last_N_reports' (e.g., last_3_reports)")
             
         # Try vector database search first
         if query:
@@ -444,6 +545,30 @@ def search_report_for_agent(ticker: str, query: str, k: int = 20, filters: Optio
                         q4_conversion_applied = True
                     
                     refined_filters = {**(refined_filters or {}), "ticker": ticker.upper()}
+                    
+                    # Apply time-based filters based on time_period parameter
+                    time_filters = _determine_time_filters(ticker, time_period, vector_store)
+                    multi_report_specs = None
+                    
+                    if time_filters:
+                        if time_filters.get("multi_report_filter"):
+                            # Special handling for latest - we have specific reports to target
+                            multi_report_specs = time_filters["reports"]
+                            report_descriptions = []
+                            for r in multi_report_specs:
+                                form_type = r.get("form_type", "")
+                                fiscal_year = r.get("fiscal_year", "")
+                                fiscal_quarter = r.get("fiscal_quarter", "")
+                                quarter_part = f"/{fiscal_quarter}" if fiscal_quarter else ""
+                                report_descriptions.append(f"{form_type} {fiscal_year}{quarter_part}")
+                            print(f"Applying multi-report time filters for time_period='{time_period}': {report_descriptions}")
+                        else:
+                            # Standard single filter
+                            print(f"Applying time filters for time_period='{time_period}': {time_filters}")
+                            refined_filters.update(time_filters)
+                    else:
+                        print(f"No time filters applied for time_period='{time_period}'")
+                    
                     # Check if API key is available for refinement
                     try:
                         has_api = bool(os.getenv('OPENROUTER_API_KEY'))
@@ -500,6 +625,16 @@ def search_report_for_agent(ticker: str, query: str, k: int = 20, filters: Optio
                             refined_query = refined['query']
                             if isinstance(refined.get('filters'), dict):
                                 rf = refined['filters']
+                                
+                                # BLOCK time-related fields from LLM refinement
+                                blocked_fields = ['fiscal_year', 'fiscal_quarter', 'form_type']
+                                original_rf = rf.copy()
+                                for field in blocked_fields:
+                                    if field in rf:
+                                        print(f"BLOCKED: LLM refinement attempted to modify {field}='{rf[field]}' - this is controlled by time period logic")
+                                        rf.pop(field)
+                                
+                                # Only merge non-blocked fields
                                 refined_filters = {**(refined_filters or {}), **rf}
                                 # Enforce section_name to one of allowed values (with robust normalization)
                                 try:
@@ -744,8 +879,17 @@ def search_report_for_agent(ticker: str, query: str, k: int = 20, filters: Optio
                     needs_balanced_search = False
                     search_configs = []
                     
-                    # Case 1: Multiple form types (10-Q + 10-K)
-                    if isinstance(form_types, list) and len(form_types) > 1:
+                    # NEW: Check if we have specific multi-report specifications from time filters
+                    if multi_report_specs:
+                        needs_balanced_search = True
+                        for report_spec in multi_report_specs:
+                            # Create config for each specific report (e.g., 10-K 2024, 10-Q 2025/Q3)
+                            config = {k: v for k, v in refined_filters.items() if k not in ('form_type', 'fiscal_year', 'fiscal_quarter')}
+                            config.update(report_spec)  # Add the specific report filters
+                            search_configs.append(config)
+                    
+                    # Case 1: Multiple form types (10-Q + 10-K) - only if not using multi_report_specs
+                    elif isinstance(form_types, list) and len(form_types) > 1:
                         needs_balanced_search = True
                         for form_type in form_types:
                             config = {k: v for k, v in refined_filters.items() if k not in ('_full_year_compare', '_full_year_form_type')}
@@ -1110,6 +1254,128 @@ def search_report_for_agent(ticker: str, query: str, k: int = 20, filters: Optio
         return _error(str(e))
 
 
+def _determine_time_filters(ticker: str, time_period: str, vector_store) -> Dict[str, Any]:
+    """Determine time-based filters using shared Company Facts functionality
+    
+    Args:
+        ticker: Company ticker symbol
+        time_period: One of 'latest', 'latest_10k_and_10q', 'latest_10k', 'latest_10q', 'last_n_reports', or 'last_N_reports' (e.g., 'last_3_reports')
+        vector_store: Vector store instance (used for last_n_reports fallback)
+        
+    Returns:
+        Dict with specific filters targeting the actual latest reports from SEC Company Facts
+    """
+    try:
+        # For Company Facts-based time periods, use shared functionality
+        if time_period in ["latest", "latest_10k_and_10q", "latest_10k", "latest_10q"]:
+            if get_time_filters_for_search is None:
+                logger.warning("fiscal_year_corrector module not available, falling back to default filters")
+                return {"ticker": ticker}
+            return get_time_filters_for_search(ticker, time_period)
+        
+        elif time_period == "last_n_reports" or time_period.startswith("last_") and time_period.endswith("_reports"):
+            # Extract N from last_N_reports pattern or use default
+            if time_period == "last_n_reports":
+                n = 4  # Default
+            else:
+                # Extract number from last_N_reports (e.g., last_3_reports -> 3)
+                import re
+                match = re.match(r'last_(\d+)_reports', time_period)
+                n = int(match.group(1)) if match else 4
+            
+            # Use vector database approach for getting last N reports
+            return _get_last_n_reports_from_vector_db(ticker, vector_store, n)
+        
+        else:
+            # For any other time_period, return no restrictions
+            return {}
+            
+    except Exception as e:
+        print(f"Warning: Error determining time filters: {e}")
+        return {}
+
+
+def _get_last_n_reports_from_vector_db(ticker: str, vector_store, n: int = 4) -> Dict[str, Any]:
+    """Get last N reports using vector database metadata (fallback for last_n_reports)"""
+    try:
+        table_name = f"annual_reports_{ticker.lower()}"
+        
+        # Query for all available reports
+        all_reports = vector_store.hybrid_search(
+            table_name=table_name,
+            query="filing",
+            k=100,
+            filters={"ticker": ticker.upper()}
+        )
+        
+        if not all_reports:
+            print(f"No reports found in vector database for {ticker}")
+            return {}
+        
+        # Extract metadata and sort by fiscal year and quarter
+        reports_metadata = []
+        for result in all_reports:
+            metadata = result.get('metadata', {})
+            if isinstance(metadata, str):
+                try:
+                    import json
+                    metadata = json.loads(metadata)
+                except:
+                    continue
+            
+            form_type = metadata.get('form_type')
+            fiscal_year = metadata.get('fiscal_year')
+            fiscal_quarter = metadata.get('fiscal_quarter')
+            
+            if form_type and fiscal_year:
+                # Create sortable key: year * 10 + quarter_order for Q, year * 10 + 5 for annual
+                if form_type == '10-K':
+                    sort_key = int(fiscal_year) * 10 + 5  # Annual goes after Q3 but before next year Q1
+                elif form_type == '10-Q' and fiscal_quarter:
+                    quarter_num = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}.get(fiscal_quarter, 0)
+                    sort_key = int(fiscal_year) * 10 + quarter_num
+                else:
+                    continue
+                
+                reports_metadata.append({
+                    "form_type": form_type,
+                    "fiscal_year": str(fiscal_year),
+                    "fiscal_quarter": fiscal_quarter,
+                    "sort_key": sort_key
+                })
+        
+        # Sort by sort_key descending (most recent first) and take first N unique reports
+        reports_metadata.sort(key=lambda x: x['sort_key'], reverse=True)
+        
+        # Remove duplicates by (form_type, fiscal_year, fiscal_quarter)
+        seen = set()
+        unique_reports = []
+        for report in reports_metadata:
+            key = (report['form_type'], report['fiscal_year'], report.get('fiscal_quarter'))
+            if key not in seen:
+                seen.add(key)
+                unique_reports.append(report)
+                if len(unique_reports) >= n:
+                    break
+        
+        if unique_reports:
+            # Create report list description separately to avoid f-string syntax issues
+            report_descriptions = [f"{r['form_type']} {r['fiscal_year']} {r.get('fiscal_quarter', '')}" for r in unique_reports]
+            print(f"Found last {len(unique_reports)} reports: {report_descriptions}")
+            return {
+                "multi_report_filter": True,
+                "reports": [{"form_type": r["form_type"], "fiscal_year": r["fiscal_year"], 
+                           **({"fiscal_quarter": r["fiscal_quarter"]} if r.get("fiscal_quarter") else {})} 
+                           for r in unique_reports]
+            }
+        else:
+            return {}
+            
+    except Exception as e:
+        print(f"Error querying vector database for last N reports: {e}")
+        return {}
+
+
 def _refine_query_with_llm(
     ticker: str,
     original_query: str,
@@ -1180,13 +1446,13 @@ def _refine_query_with_llm(
             "Form type rules: Use '10-Q' for Q1, Q2, Q3 quarterly data. For Q4 data, use '10-K' in form_type and omit fiscal_quarter.\n"
             "For granularity, use 'micro' for revenue/performance analysis (more detailed business content) or 'base' for standard chunks.\n"
             "\n"
-            "QUERY TYPE DETECTION:\n"
-            "- For full-year/annual analysis (e.g., '2023 and 2024', 'annual growth', 'year-over-year'): use ONLY form_type=['10-K'], omit fiscal_quarter, BUT ALWAYS include fiscal_year\n"
-            "- For quarterly analysis (e.g., 'Q3 vs Q2', 'quarterly trends'): use form_type=['10-Q'] with specific fiscal_quarter AND fiscal_year\n"
-            "- For mixed analysis (e.g., 'Q3 2024 vs full year 2023'): use both form_types with appropriate fiscal_quarter where needed AND fiscal_year\n"
-            "\n"
-            "CRITICAL: If query mentions multiple YEARS (e.g., '2023 and 2024') without specific quarters, this is ANNUAL analysis - use ONLY form_type=['10-K'] BUT ALWAYS PRESERVE fiscal_year!\n"
-            "CRITICAL: NEVER omit fiscal_year when years are mentioned in the query - the database has multiple years of data!\n"
+            "QUERY REFINEMENT FOCUS:\n"
+            "- Focus ONLY on refining the query text and selecting appropriate sections\n"
+            "- NEVER modify fiscal_year, fiscal_quarter, or form_type - these are controlled by time period logic\n"
+            "- Do NOT add or change any time-related filters (fiscal_year, fiscal_quarter, form_type)\n"
+            "- Your job is ONLY to improve query text and select relevant section_name and granularity\n"
+            "- Preserve all existing filters - only add section_name and granularity if appropriate\n"
+            "- Time filtering is handled separately - do not make any temporal assumptions\n"
             "\n"
             "\nSchema: { query: string, filters: { section_name?: string | string[], form_type?: string | string[], fiscal_year?: string | string[], fiscal_quarter?: string | string[], granularity?: 'base' | 'micro', filing_date_after?: string, filing_date_before?: string } }\n"
             + allowed_sections_block

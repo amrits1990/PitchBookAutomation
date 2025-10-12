@@ -14,6 +14,12 @@ import requests
 from dotenv import load_dotenv
 from pathlib import Path
 import pandas as pd
+import sys
+
+# Add current directory to path to ensure local module imports work
+_current_file_dir = Path(__file__).parent
+if str(_current_file_dir) not in sys.path:
+    sys.path.insert(0, str(_current_file_dir))
 
 logger = logging.getLogger(__name__)
 
@@ -109,17 +115,26 @@ def validate_period(period: str) -> Optional[str]:
         else:
             return f"Year must be between 2000 and 2030, got {year}"
     
-    # Trend patterns: last n quarters, last n financial years (n = 1-10)
+    # Trend patterns: last n quarters, last n financial years (quarters: n=1-40, years: n=1-10)
     trend_pattern = r'^last (\d+) (quarters|financial years)$'
     match = re.match(trend_pattern, period)
     if match:
         count = int(match.group(1))
-        if 1 <= count <= 10:
-            return None
+        unit = match.group(2)
+        if unit == "quarters":
+            if 1 <= count <= 40:
+                return None
+            else:
+                return f"Count for quarters must be between 1 and 40, got {count}"
+        elif unit == "financial years":
+            if 1 <= count <= 10:
+                return None
+            else:
+                return f"Count for financial years must be between 1 and 10, got {count}"
         else:
-            return f"Count must be between 1 and 10, got {count}"
+            return f"Invalid period unit: {unit}"
     
-    return f"Invalid period format. Supported: latest, FY2024, Q1-2024, last n quarters, last n financial years (n=1-10)"
+    return f"Invalid period format. Supported: latest, FY2024, Q1-2024, last n quarters (n=1-40), last n financial years (n=1-10)"
 
 def validate_metrics(metrics: List[str], available_metrics: List[str] = None) -> Optional[str]:
     """Validate metric names. Returns None if valid, error message if invalid."""
@@ -463,8 +478,14 @@ def get_financial_metrics_for_agent(ticker: str, metrics: List[str], period: str
             return create_error_response(ErrorCodes.INVALID_METRIC, metrics_error)
         
         # Import here to avoid circular imports
-        from standalone_interface import get_company_financial_data
-        
+        # Add current directory to path for imports
+        import sys
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
+
+        from .standalone_interface import get_company_financial_data
+
         # Get financial data
         df = get_company_financial_data(ticker.upper(), auto_process=True, include_ratios=False)
         if df is None or df.empty:
@@ -976,14 +997,20 @@ def get_ratios_for_agent(ticker: str, categories: List[str] = None, period: str 
                     return create_error_response(ErrorCodes.VALIDATION_ERROR, category_error)
         
         # SIMPLIFIED: Query calculated_ratios table directly
-        from database import FinancialDatabase
+        # Add current directory to path for imports
+        import sys
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
+            
+        from .database import FinancialDatabase
         import pandas as pd
-        
+
         with FinancialDatabase() as db:
             # Check cache first
             if not db.is_company_data_fresh(ticker, hours=24):
                 # Data is stale, need to refresh first
-                from standalone_interface import process_company_financials
+                from .standalone_interface import process_company_financials
                 logger.info(f"Data for {ticker} is stale, refreshing...")
                 process_result = process_company_financials(
                     ticker=ticker,
@@ -1158,10 +1185,10 @@ def get_ratio_definition_for_agent(ratio_name: str, ticker: str = None) -> Finan
             ticker_error = validate_ticker(ticker)
             if ticker_error:
                 return create_error_response(ErrorCodes.INVALID_TICKER, ticker_error)
-        
+
         # Import here to avoid circular imports
-        from main import get_ratio_definitions
-        
+        from .main import get_ratio_definitions
+
         # Get ratio definitions
         ratio_definitions = get_ratio_definitions(ticker)
         if not ratio_definitions:
@@ -1495,51 +1522,23 @@ def _organize_trend_comparison_data(company_ratio_data, categories, successful_c
                             category_comparison['ratios'][trend_key] = ratio_comparison
                         
                 else:
-                    # For quarters, use the existing logic (sort by period chronologically)
-                    # Sort ratio keys by period (most recent first)
-                    sorted_ratio_keys = sorted(ratio_keys, reverse=True)
-                    
-                    # For each period of this ratio, create a comparison
-                    for period_idx, ratio_key in enumerate(sorted_ratio_keys):
-                        # Create a unique key that includes period info
+                    # For quarters, align by period_end_date instead of fiscal quarter labels
+                    aligned_periods = _align_quarters_by_period_end_date(company_ratio_data, cat, base_ratio_name, successful_companies, period)
+
+                    for period_idx, period_data in enumerate(aligned_periods):
                         trend_key = f"{base_ratio_name}_Q_Period_{period_idx + 1}"
-                        
+
                         ratio_comparison = {
                             'ratio_name': base_ratio_name,
-                            'period_info': _extract_period_info_from_key(ratio_key),
-                            'company_values': {},
+                            'period_info': period_data['period_info'],
+                            'company_values': period_data['company_values'],
                             'statistics': {}
                         }
-                        
-                        ratio_values = []
-                        companies_with_ratio = []
-                        
-                        # Collect values for this specific ratio+period from all companies
-                        for ticker in successful_companies:
-                            if ticker in company_ratio_data and cat in company_ratio_data[ticker]:
-                                category_data = company_ratio_data[ticker][cat]
-                                # Access the 'ratios' key from the category data structure
-                                company_ratios = category_data.get('ratios', {}) if isinstance(category_data, dict) else {}
-                                
-                                if ratio_key in company_ratios:
-                                    ratio_data = company_ratios[ratio_key]
-                                    try:
-                                        value = float(ratio_data.get('value', 0))
-                                        ratio_comparison['company_values'][ticker] = {
-                                            'value': value,
-                                            'period_end_date': ratio_data.get('period_end_date'),
-                                            'fiscal_year': ratio_data.get('fiscal_year'),
-                                            'formula': ratio_data.get('formula'),
-                                            'description': ratio_data.get('description'),
-                                            'calculation_inputs': ratio_data.get('calculation_inputs')  # Add underlying $ values
-                                        }
-                                        ratio_values.append(value)
-                                        companies_with_ratio.append(ticker)
-                                    except (ValueError, TypeError):
-                                        logger.warning(f"Invalid ratio value for {ticker} {ratio_key}: {ratio_data.get('value')}")
-                        
-                        # Calculate statistics if we have data (remove rankings)
-                        if ratio_values and companies_with_ratio:
+
+                        # Calculate statistics (remove rankings)
+                        if period_data['company_values']:
+                            ratio_values = [data['value'] for data in period_data['company_values'].values()]
+
                             # Calculate statistics
                             ratio_comparison['statistics'] = {
                                 'count': len(ratio_values),
@@ -1548,7 +1547,7 @@ def _organize_trend_comparison_data(company_ratio_data, categories, successful_c
                                 'average': sum(ratio_values) / len(ratio_values),
                                 'median': sorted(ratio_values)[len(ratio_values) // 2] if ratio_values else 0
                             }
-                            
+
                             category_comparison['ratios'][trend_key] = ratio_comparison
             
             category_comparison['company_count'] = len(successful_companies)
@@ -1993,6 +1992,165 @@ def _extract_period_info_from_key(ratio_key):
         return {'type': 'Unknown', 'year': None, 'quarter': None}
 
 
+def _align_quarters_by_period_end_date(company_ratio_data, category, base_ratio_name, successful_companies, period):
+    """
+    Align quarters across companies by clustering period_end_dates by temporal proximity.
+
+    Instead of forcing "1st most recent, 2nd most recent" matching, this groups quarters that
+    are temporally close (within ~45 days), handling cases where some companies report later
+    than others. For example, if AAPL reports 9/30 but peers only have 6/30 available, AAPL's
+    9/30 will be in a separate period (possibly alone) while 6/30 quarters from all companies
+    cluster together.
+
+    Args:
+        company_ratio_data: Dictionary of company ratio data
+        category: Ratio category being analyzed
+        base_ratio_name: Base name of ratio (e.g., 'Current_Ratio')
+        successful_companies: List of company tickers
+        period: Period string (e.g., 'last 12 quarters')
+
+    Returns:
+        List of aligned period data dictionaries, ordered from most recent to oldest
+    """
+    from datetime import datetime, timedelta
+    import re
+
+    # Extract number of quarters requested
+    match = re.search(r'last (\d+) quarters?', period)
+    if not match:
+        logger.warning(f"Could not parse number of quarters from period: {period}")
+        return []
+
+    num_quarters = int(match.group(1))
+
+    # Collect all quarterly ratio data from all companies with their period_end_dates
+    all_quarterly_data = []
+
+    for ticker in successful_companies:
+        if ticker in company_ratio_data and category in company_ratio_data[ticker]:
+            category_data = company_ratio_data[ticker][category]
+            company_ratios = category_data.get('ratios', {}) if isinstance(category_data, dict) else {}
+
+            # Find all quarterly ratios for this base ratio name (exclude FY ratios)
+            for ratio_key, ratio_data in company_ratios.items():
+                if (ratio_key.startswith(base_ratio_name) and '_Q' in ratio_key and '_FY' not in ratio_key):
+                    try:
+                        period_end_date_str = ratio_data.get('period_end_date')
+                        if period_end_date_str:
+                            period_end_date = datetime.strptime(period_end_date_str, '%Y-%m-%d').date()
+
+                            all_quarterly_data.append({
+                                'ticker': ticker,
+                                'ratio_key': ratio_key,
+                                'period_end_date': period_end_date,
+                                'fiscal_year': ratio_data.get('fiscal_year'),
+                                'ratio_data': ratio_data
+                            })
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Could not parse period_end_date for {ticker} {ratio_key}: {e}")
+
+    if not all_quarterly_data:
+        logger.warning(f"No quarterly data found for {base_ratio_name} across companies")
+        return []
+
+    # Sort ALL data by period_end_date (most recent first)
+    all_quarterly_data.sort(key=lambda x: x['period_end_date'], reverse=True)
+
+    # TEMPORAL CLUSTERING: Group quarters by date proximity
+    # Dates within THRESHOLD days are considered "same period"
+    PROXIMITY_THRESHOLD_DAYS = 45
+
+    aligned_periods = []
+    used_indices = set()
+
+    while len(aligned_periods) < num_quarters and len(used_indices) < len(all_quarterly_data):
+        # Find the most recent unused date as anchor for this period
+        anchor_idx = None
+        anchor_date = None
+
+        for idx, data in enumerate(all_quarterly_data):
+            if idx not in used_indices:
+                anchor_idx = idx
+                anchor_date = data['period_end_date']
+                break
+
+        if anchor_idx is None:
+            break  # No more unused data
+
+        # For each company, find their data closest to anchor (within threshold, unused)
+        period_data_by_company = {}
+
+        for ticker in successful_companies:
+            # Find all unused data for this company within threshold of anchor
+            company_candidates = []
+
+            for idx, data in enumerate(all_quarterly_data):
+                if (data['ticker'] == ticker and
+                    idx not in used_indices and
+                    abs((data['period_end_date'] - anchor_date).days) <= PROXIMITY_THRESHOLD_DAYS):
+                    company_candidates.append((idx, data))
+
+            if company_candidates:
+                # Pick the one closest to anchor date
+                best_idx, best_data = min(
+                    company_candidates,
+                    key=lambda x: abs((x[1]['period_end_date'] - anchor_date).days)
+                )
+
+                # Extract fiscal quarter from ratio_key
+                fiscal_quarter = None
+                ratio_key = best_data['ratio_key']
+                if '_Q' in ratio_key:
+                    quarter_match = re.search(r'_Q(\d)-(\d{4})', ratio_key)
+                    if quarter_match:
+                        fiscal_quarter = f"Q{quarter_match.group(1)}-{quarter_match.group(2)}"
+
+                period_data_by_company[ticker] = {
+                    'value': best_data['ratio_data'].get('value'),
+                    'period_end_date': best_data['period_end_date'].strftime('%Y-%m-%d'),
+                    'fiscal_year': best_data['fiscal_year'],
+                    'fiscal_quarter': fiscal_quarter,
+                    'formula': best_data['ratio_data'].get('formula'),
+                    'description': best_data['ratio_data'].get('description'),
+                    'calculation_inputs': best_data['ratio_data'].get('calculation_inputs')
+                }
+
+                used_indices.add(best_idx)
+
+        # Create period if we have data from at least one company
+        if period_data_by_company:
+            period_dates = [
+                datetime.strptime(data['period_end_date'], '%Y-%m-%d').date()
+                for data in period_data_by_company.values()
+            ]
+
+            # Calculate cluster center for reference
+            avg_days = sum((d - datetime(1970, 1, 1).date()).days for d in period_dates) / len(period_dates)
+            cluster_center = datetime(1970, 1, 1).date() + timedelta(days=int(avg_days))
+
+            period_info = {
+                'type': 'Quarter',
+                'period_number': len(aligned_periods) + 1,
+                'clustering_method': f'Temporal proximity (within {PROXIMITY_THRESHOLD_DAYS} days)',
+                'cluster_center_date': cluster_center.strftime('%Y-%m-%d'),
+                'companies_included': list(period_data_by_company.keys()),
+                'companies_missing': [t for t in successful_companies if t not in period_data_by_company],
+                'date_range': {
+                    'earliest': min(period_dates).strftime('%Y-%m-%d'),
+                    'latest': max(period_dates).strftime('%Y-%m-%d'),
+                    'span_days': (max(period_dates) - min(period_dates)).days
+                },
+                'note': 'Companies may be missing if they have not yet reported for this period'
+            }
+
+            aligned_periods.append({
+                'period_info': period_info,
+                'company_values': period_data_by_company
+            })
+
+    return aligned_periods
+
+
 def _align_financial_years_by_period_end_date(company_ratio_data, category, base_ratio_name, successful_companies, period):
     """
     Align financial years across companies based on period_end_date proximity instead of fiscal_year numbers.
@@ -2095,15 +2253,26 @@ def _align_financial_years_by_period_end_date(company_ratio_data, category, base
                     if abs((best_data['period_end_date'] - avg_date).days) > 180:
                         continue
                 
+                # Extract fiscal period from ratio_key (e.g., "ROE_FY-2025" -> "FY-2025")
+                fiscal_period = None
+                ratio_key = best_data['ratio_key']
+                if '_FY' in ratio_key:
+                    # Extract FY-pattern from the ratio key
+                    import re
+                    fy_match = re.search(r'_FY-?(\d{4})', ratio_key)
+                    if fy_match:
+                        fiscal_period = f"FY-{fy_match.group(1)}"
+
                 period_companies[ticker] = {
                     'value': best_data['ratio_data'].get('value'),
                     'period_end_date': best_data['period_end_date'].strftime('%Y-%m-%d'),
                     'fiscal_year': best_data['fiscal_year'],
+                    'fiscal_period': fiscal_period,  # Add fiscal period (FY-2025 format)
                     'formula': best_data['ratio_data'].get('formula'),
                     'description': best_data['ratio_data'].get('description'),
                     'calculation_inputs': best_data['ratio_data'].get('calculation_inputs')  # Add underlying $ values
                 }
-                
+
                 current_period_dates.append(best_data['period_end_date'])
                 used_data_indices.add(best_idx)
         

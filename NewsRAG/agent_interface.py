@@ -335,3 +335,353 @@ def _get_sentiment_recommendation(sentiment: str, confidence: str) -> str:
     }
     
     return recommendations.get(sentiment, "Monitor news sentiment for changes in market perception.")
+
+
+def get_news_by_date_range_and_topic(
+    company: str,
+    start_date: str,
+    end_date: str,
+    topic: str,
+    max_articles: int = 20
+) -> Dict[str, Any]:
+    """
+    Enhanced agent function to retrieve news for any company between specific dates on a particular topic
+    
+    Args:
+        company: Company name or ticker symbol (e.g., 'Apple', 'AAPL', 'Tesla', 'TSLA')
+        start_date: Start date in 'YYYY-MM-DD' format (e.g., '2024-01-01')
+        end_date: End date in 'YYYY-MM-DD' format (e.g., '2024-01-31')
+        topic: News topic from available options: 'earnings', 'acquisitions', 'partnerships', 
+               'products', 'leadership', 'regulatory', 'market', 'financial', 'business', 'general'
+        max_articles: Maximum number of articles to retrieve (default: 20)
+        
+    Returns:
+        Comprehensive dictionary optimized for agent consumption:
+        {
+            "success": bool,
+            "company": str,
+            "date_range": {"start": str, "end": str},
+            "topic": str,
+            "summary": str,                    # Agent-consumable overview
+            "articles_found": int,
+            "key_headlines": List[str],        # Important headlines
+            "key_insights": List[str],         # Extracted insights
+            "sentiment": str,                  # Overall sentiment
+            "date_distribution": Dict,         # News distribution over time
+            "source_breakdown": Dict,          # News sources analysis
+            "chunks": List[dict],              # RAG-ready chunks
+            "metadata": dict,                  # Processing info
+            "available_topics": List[str],     # Valid topic options
+            "errors": List[str]
+        }
+    """
+    
+    try:
+        # Validate inputs
+        validation_result = _validate_date_range_inputs(company, start_date, end_date, topic)
+        if not validation_result["valid"]:
+            return _create_error_response(company, start_date, end_date, topic, validation_result["errors"])
+        
+        # Calculate days back from date range
+        from datetime import datetime
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        current_dt = datetime.now()
+        
+        # Calculate days back from current date to start date
+        days_back = (current_dt - start_dt).days
+        days_back = max(1, days_back)  # Ensure at least 1 day
+        
+        logger.info(f"Getting news for {company} from {start_date} to {end_date} on topic '{topic}' (days_back: {days_back})")
+        
+        # Get raw news data using existing function
+        result = get_company_news_chunks(
+            companies=[company],
+            categories=[topic],
+            days_back=days_back,
+            max_articles_per_query=max_articles
+        )
+        
+        if not result["success"] or not result["chunks"]:
+            return {
+                "success": False,
+                "company": company,
+                "date_range": {"start": start_date, "end": end_date},
+                "topic": topic,
+                "summary": f"No news found for {company} between {start_date} and {end_date} on topic '{topic}'",
+                "articles_found": 0,
+                "key_headlines": [],
+                "key_insights": [],
+                "sentiment": "neutral",
+                "date_distribution": {},
+                "source_breakdown": {},
+                "chunks": [],
+                "metadata": {"error": "No news data available"},
+                "available_topics": _get_available_topics(),
+                "errors": result.get("errors", ["No news data found"])
+            }
+        
+        # Filter chunks to exact date range
+        filtered_chunks = _filter_chunks_by_date_range(result["chunks"], start_dt, end_dt)
+        
+        if not filtered_chunks:
+            return {
+                "success": False,
+                "company": company,
+                "date_range": {"start": start_date, "end": end_date},
+                "topic": topic,
+                "summary": f"No news found for {company} in the exact date range {start_date} to {end_date} on topic '{topic}'",
+                "articles_found": 0,
+                "key_headlines": [],
+                "key_insights": [],
+                "sentiment": "neutral",
+                "date_distribution": {},
+                "source_breakdown": {},
+                "chunks": [],
+                "metadata": {"note": f"Found {len(result['chunks'])} articles in broader range, but none in exact date range"},
+                "available_topics": _get_available_topics(),
+                "errors": ["No articles found in specified date range"]
+            }
+        
+        # Process filtered chunks for enhanced agent consumption
+        processed_result = _process_chunks_for_date_range_agent(
+            filtered_chunks, company, start_date, end_date, topic
+        )
+        
+        return {
+            "success": True,
+            "company": company,
+            "date_range": {"start": start_date, "end": end_date},
+            "topic": topic,
+            "summary": processed_result["summary"],
+            "articles_found": len(filtered_chunks),
+            "key_headlines": processed_result["key_headlines"],
+            "key_insights": processed_result["key_insights"],
+            "sentiment": processed_result["sentiment"],
+            "date_distribution": processed_result["date_distribution"],
+            "source_breakdown": processed_result["source_breakdown"],
+            "chunks": filtered_chunks,  # For vector storage
+            "metadata": {
+                "processing_time": result.get("processing_time_seconds", 0),
+                "total_articles_retrieved": len(result["chunks"]),
+                "articles_after_date_filtering": len(filtered_chunks),
+                "companies_covered": result["summary"].get("companies_covered", []),
+                "topic_searched": topic,
+                "search_method": "date_range_filtered"
+            },
+            "available_topics": _get_available_topics(),
+            "errors": []
+        }
+        
+    except Exception as e:
+        error_msg = f"Error retrieving news for {company}: {str(e)}"
+        logger.error(error_msg)
+        
+        return _create_error_response(company, start_date, end_date, topic, [str(e)])
+
+
+def _validate_date_range_inputs(company: str, start_date: str, end_date: str, topic: str) -> Dict[str, Any]:
+    """Validate inputs for date range function"""
+    errors = []
+    
+    # Validate company
+    if not company or not isinstance(company, str) or len(company.strip()) == 0:
+        errors.append("Company name/ticker is required and must be a non-empty string")
+    
+    # Validate dates
+    try:
+        from datetime import datetime
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        
+        if start_dt > end_dt:
+            errors.append("Start date must be before or equal to end date")
+        
+        if end_dt > datetime.now():
+            errors.append("End date cannot be in the future")
+        
+        # Check if date range is reasonable (not more than 2 years)
+        if (end_dt - start_dt).days > 730:
+            errors.append("Date range too large. Maximum 2 years (730 days) allowed")
+            
+    except ValueError as e:
+        errors.append(f"Invalid date format. Use 'YYYY-MM-DD' format. Error: {str(e)}")
+    
+    # Validate topic
+    available_topics = _get_available_topics()
+    if topic not in available_topics:
+        errors.append(f"Invalid topic '{topic}'. Available topics: {', '.join(available_topics)}")
+    
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors
+    }
+
+
+def _get_available_topics() -> List[str]:
+    """Get list of available news topics"""
+    return [
+        "earnings",      # Quarterly results, financial reports
+        "acquisitions",  # Mergers, buyouts, deals
+        "partnerships",  # Collaborations, alliances
+        "products",      # Product launches, innovations
+        "leadership",    # Executive changes, appointments
+        "regulatory",    # Compliance, legal issues
+        "market",        # Stock performance, analyst reports
+        "financial",     # Funding, investments, IPOs
+        "business",      # General business operations
+        "general"        # All other news
+    ]
+
+
+def _filter_chunks_by_date_range(chunks: List[Dict], start_dt, end_dt) -> List[Dict]:
+    """Filter chunks to only include those within the exact date range"""
+    filtered_chunks = []
+    
+    for chunk in chunks:
+        pub_date_str = chunk.get("metadata", {}).get("published_date", "")
+        if pub_date_str:
+            try:
+                # Handle different date formats
+                pub_date = datetime.fromisoformat(pub_date_str.replace("Z", "+00:00"))
+                
+                # Remove timezone info for comparison if start_dt and end_dt are naive
+                if start_dt.tzinfo is None and pub_date.tzinfo is not None:
+                    pub_date = pub_date.replace(tzinfo=None)
+                
+                if start_dt <= pub_date <= end_dt:
+                    filtered_chunks.append(chunk)
+                    
+            except Exception as e:
+                logger.warning(f"Error parsing date '{pub_date_str}': {e}")
+                continue
+    
+    return filtered_chunks
+
+
+def _process_chunks_for_date_range_agent(
+    chunks: List[Dict], 
+    company: str, 
+    start_date: str, 
+    end_date: str, 
+    topic: str
+) -> Dict[str, Any]:
+    """Process chunks for enhanced agent consumption with date range analysis"""
+    
+    # Extract key information
+    key_headlines = []
+    key_insights = []
+    sentiment_scores = []
+    date_distribution = {}
+    source_breakdown = {}
+    
+    # Sort chunks by date (most recent first)
+    sorted_chunks = sorted(
+        chunks,
+        key=lambda x: x.get("metadata", {}).get("published_date", ""),
+        reverse=True
+    )
+    
+    # Process each chunk
+    for chunk in sorted_chunks:
+        content = chunk.get("content", "")
+        metadata = chunk.get("metadata", {})
+        
+        # Extract headlines
+        title = metadata.get("title", "")
+        if title and title not in key_headlines:
+            key_headlines.append(title)
+        
+        # Extract key insights (first 2 sentences of each article)
+        if content:
+            sentences = content.split('.')[:2]  # First 2 sentences
+            insight = '. '.join(sentences).strip()
+            if len(insight) > 30 and insight not in key_insights:
+                key_insights.append(f"• {insight}")
+        
+        # Track sentiment
+        sentiment = metadata.get("sentiment", "neutral")
+        if sentiment in ["positive", "negative", "neutral"]:
+            sentiment_scores.append(sentiment)
+        
+        # Track date distribution
+        pub_date_str = metadata.get("published_date", "")
+        if pub_date_str:
+            try:
+                pub_date = datetime.fromisoformat(pub_date_str.replace("Z", "+00:00"))
+                date_key = pub_date.strftime("%Y-%m-%d")
+                date_distribution[date_key] = date_distribution.get(date_key, 0) + 1
+            except:
+                pass
+        
+        # Track source breakdown
+        source = metadata.get("source", "unknown")
+        source_breakdown[source] = source_breakdown.get(source, 0) + 1
+    
+    # Analyze overall sentiment
+    overall_sentiment = _analyze_overall_sentiment(sentiment_scores)
+    
+    # Create summary
+    summary = _create_date_range_summary(
+        company, len(chunks), start_date, end_date, topic, overall_sentiment
+    )
+    
+    return {
+        "summary": summary,
+        "key_headlines": key_headlines[:10],  # Top 10 headlines
+        "key_insights": key_insights[:8],     # Top 8 insights
+        "sentiment": overall_sentiment,
+        "date_distribution": dict(sorted(date_distribution.items())),
+        "source_breakdown": dict(sorted(source_breakdown.items(), key=lambda x: x[1], reverse=True))
+    }
+
+
+def _create_date_range_summary(
+    company: str, 
+    article_count: int, 
+    start_date: str, 
+    end_date: str, 
+    topic: str, 
+    sentiment: str
+) -> str:
+    """Create a concise summary for date range analysis"""
+    
+    summary_parts = [
+        f"Found {article_count} {topic} news articles for {company} between {start_date} and {end_date}."
+    ]
+    
+    if sentiment != "neutral":
+        summary_parts.append(f"Overall news sentiment is {sentiment}.")
+    
+    if article_count > 0:
+        summary_parts.append(f"Coverage focuses on {topic}-related developments and their impact on {company}.")
+    
+    return " ".join(summary_parts)
+
+
+def _create_error_response(
+    company: str, 
+    start_date: str, 
+    end_date: str, 
+    topic: str, 
+    errors: List[str]
+) -> Dict[str, Any]:
+    """Create standardized error response"""
+    
+    return {
+        "success": False,
+        "company": company,
+        "date_range": {"start": start_date, "end": end_date},
+        "topic": topic,
+        "summary": f"Unable to retrieve news for {company} due to validation errors",
+        "articles_found": 0,
+        "key_headlines": [],
+        "key_insights": [],
+        "sentiment": "neutral",
+        "date_distribution": {},
+        "source_breakdown": {},
+        "chunks": [],
+        "metadata": {"validation_errors": errors},
+        "available_topics": _get_available_topics(),
+        "errors": errors
+    }

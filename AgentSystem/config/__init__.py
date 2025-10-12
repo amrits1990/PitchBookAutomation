@@ -1,7 +1,7 @@
 """
-Configuration management for AgentSystem
+Configuration module for AgentSystem
 """
 
-from .main import AgentConfig, config
+from .main import config
 
-__all__ = ["AgentConfig", "config"]
+__all__ = ["config"]

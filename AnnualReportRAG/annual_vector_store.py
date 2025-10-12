@@ -9,12 +9,26 @@ from datetime import datetime, date
 from pathlib import Path
 import json
 import logging
+import sys
+import os
+
+# Add parent directory to import shared utilities
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lancedb
 import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
+
+# Import robust embedding loader for reliable model loading
+try:
+    from shared_utils import create_embedding_loader
+    ROBUST_LOADER_AVAILABLE = True
+except ImportError as e:
+    ROBUST_LOADER_AVAILABLE = False
+    logger_temp = logging.getLogger(__name__)
+    logger_temp.warning(f"Robust embedding loader not available: {e}. Falling back to standard loading.")
 
 # Try to import config from AgentSystem, with fallback
 try:
@@ -65,6 +79,7 @@ class AnnualVectorStore:
         Path(self.db_path).mkdir(parents=True, exist_ok=True)
         self._db = None
         self._encoder = None
+        self._embedding_loader = None  # Robust embedding loader
         self._tables: Dict[str, Any] = {}
 
     @property
@@ -75,15 +90,66 @@ class AnnualVectorStore:
 
     @property
     def encoder(self) -> SentenceTransformer:
+        """Load embedding model with robust error handling."""
         if self._encoder is None:
-            logger.info(f"Loading embedding model: {self.embedding_model_name}")
-            self._encoder = SentenceTransformer(self.embedding_model_name)
+            if ROBUST_LOADER_AVAILABLE:
+                # Use robust loader with retry logic and cache management
+                if self._embedding_loader is None:
+                    self._embedding_loader = create_embedding_loader(
+                        model_name=self.embedding_model_name,
+                        max_retries=3,
+                        retry_delay=2.0
+                    )
+                logger.info(f"Loading embedding model with robust loader: {self.embedding_model_name}")
+                self._encoder = self._embedding_loader.load_model()
+            else:
+                # Fallback to standard loading
+                logger.info(f"Loading embedding model (standard): {self.embedding_model_name}")
+                try:
+                    self._encoder = SentenceTransformer(self.embedding_model_name)
+
+                    # Log which device it ended up on
+                    import torch
+                    if torch.cuda.is_available():
+                        logger.info("Model loaded with CUDA available")
+                    else:
+                        logger.info("Model loaded on CPU")
+
+                except Exception as e:
+                    logger.error(f"Error loading embedding model {self.embedding_model_name}: {e}")
+                    raise Exception(f"Could not load embedding model: {e}")
+
         return self._encoder
 
     def create_embeddings(self, texts: List[str]) -> np.ndarray:
+        """Create embeddings with automatic error recovery."""
         if not texts:
             return np.array([])
-        return self.encoder.encode(texts, show_progress_bar=len(texts) > 10)
+
+        if ROBUST_LOADER_AVAILABLE and self._embedding_loader is not None:
+            # Use robust loader's encode method with built-in error handling
+            try:
+                return self._embedding_loader.encode(
+                    texts,
+                    show_progress_bar=len(texts) > 10
+                )
+            except Exception as e:
+                logger.error(f"Robust embedding creation failed: {e}")
+                raise
+        else:
+            # Fallback to standard encoding with retry logic
+            try:
+                return self.encoder.encode(texts, show_progress_bar=len(texts) > 10)
+            except Exception as e:
+                logger.error(f"Error creating embeddings: {e}")
+                logger.info("Attempting to reinitialize encoder...")
+                # Clear the cached encoder and try again
+                self._encoder = None
+                try:
+                    return self.encoder.encode(texts, show_progress_bar=len(texts) > 10)
+                except Exception as e2:
+                    logger.error(f"Failed to create embeddings after reinitializing encoder: {e2}")
+                    raise
 
     def index_documents(self, table_name: str, documents: List[Dict[str, Any]], text_field: str = "content", overwrite: bool = False) -> Dict[str, Any]:
         try:

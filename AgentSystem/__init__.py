@@ -1,17 +1,8 @@
 """
-AI Financial Analysis Agent System
-
-A multi-agent system for comprehensive financial analysis using LangChain + LangGraph.
-Provides specialist domain agents with vector database-backed RAG capabilities.
+AgentSystem - Vector Database and Configuration Support for RAG Systems
 """
 
-__version__ = "1.0.0"
-__author__ = "AI Assistant"
-
+from .config import config
 from .vector_store import VectorStore
-from .config import AgentConfig
 
-__all__ = [
-    "VectorStore",
-    "AgentConfig",
-]
+__all__ = ["config", "VectorStore"]

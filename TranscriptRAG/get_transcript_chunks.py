@@ -20,6 +20,7 @@ try:
     from .transcript_metadata_extractor import TranscriptMetadataExtractor
     from .transcript_content_processor import TranscriptContentProcessor
     from .transcript_chunk_generator import TranscriptChunkGenerator
+    from .enhanced_transcript_chunker import EnhancedTranscriptChunker
     from .transcript_config import (
         get_transcript_config, get_transcript_config_manager,
         validate_transcript_environment
@@ -34,6 +35,7 @@ except ImportError:
     from transcript_metadata_extractor import TranscriptMetadataExtractor
     from transcript_content_processor import TranscriptContentProcessor
     from transcript_chunk_generator import TranscriptChunkGenerator
+    from enhanced_transcript_chunker import EnhancedTranscriptChunker
     from transcript_config import (
         get_transcript_config, get_transcript_config_manager,
         validate_transcript_environment
@@ -60,6 +62,7 @@ class TranscriptProcessor:
         self.metadata_extractor = TranscriptMetadataExtractor()
         self.content_processor = TranscriptContentProcessor()
         self.chunk_generator = TranscriptChunkGenerator()
+        self.enhanced_chunker = EnhancedTranscriptChunker()
         
         # Initialize data sources
         self._initialize_data_sources()
@@ -99,43 +102,71 @@ class TranscriptProcessor:
         # Process content
         processed_content = self.content_processor.process_transcript_content(transcript_data)
         
-        # Create section-based chunks
-        section_chunks_data = self.content_processor.create_section_chunks_metadata(
-            processed_content, transcript_data
-        )
-        
-        all_chunks = []
-        chunk_id_counter = 0
-        
-        # Process each section using specialized chunking strategies
-        for section_data in section_chunks_data:
-            section_text = section_data['text']
-            section_metadata = section_data['metadata']
-            section_name = section_metadata.get('section_name', '')
+        # Check if this is Alpha Vantage data with structured raw_data - use enhanced chunking
+        if (transcript_data.source == "alpha_vantage" and 
+            hasattr(transcript_data, 'raw_data') and 
+            isinstance(transcript_data.raw_data, dict) and 
+            'transcript' in transcript_data.raw_data):
             
-            if 'Q&A' in section_name:
-                # Use Q&A-specific chunking that groups questions with answers
-                section_chunks = self.chunk_generator.create_qa_grouped_chunks(
-                    section_text, section_metadata, chunk_size=1200, overlap=0
-                )
-            elif 'Opening Remarks' in section_name:
-                # Use no-overlap chunking for opening remarks (preserves JSON entry boundaries)
-                section_chunks = self.chunk_generator.create_opening_remarks_chunks(
-                    section_text, section_metadata, chunk_size=chunk_size
-                )
-            else:
-                # Fallback to regular chunking for other sections
-                section_chunks = self.chunk_generator.create_transcript_chunks(
-                    section_text, section_metadata, chunk_size, overlap
-                )
+            # Use enhanced chunking for Alpha Vantage structured data
+            base_metadata = {
+                'ticker': transcript_data.ticker,
+                'quarter': transcript_data.quarter,
+                'fiscal_year': transcript_data.fiscal_year,
+                'transcript_date': transcript_data.transcript_date.isoformat(),
+                'transcript_type': transcript_data.transcript_type,
+                'company_name': transcript_data.company_name,
+                'source': transcript_data.source,
+                'extraction_timestamp': datetime.now().isoformat(),
+                'speakers_info': processed_content.get('processing_metadata', {}).get('speakers_info', []),
+                'speakers_with_titles': processed_content.get('processing_metadata', {}).get('speakers_with_titles', {}),
+            }
             
-            # Update global chunk IDs
-            for chunk in section_chunks:
-                chunk['global_chunk_id'] = chunk_id_counter
-                chunk['metadata']['global_chunk_id'] = chunk_id_counter
-                chunk_id_counter += 1
+            # Create enhanced chunks directly from Alpha Vantage transcript entries
+            all_chunks = self.enhanced_chunker.create_enhanced_chunks(
+                transcript_data.raw_data['transcript'], 
+                base_metadata
+            )
             
-            all_chunks.extend(section_chunks)
+        else:
+            # Use legacy chunking for other sources
+            # Create section-based chunks
+            section_chunks_data = self.content_processor.create_section_chunks_metadata(
+                processed_content, transcript_data
+            )
+            
+            all_chunks = []
+            chunk_id_counter = 0
+            
+            # Process each section using specialized chunking strategies
+            for section_data in section_chunks_data:
+                section_text = section_data['text']
+                section_metadata = section_data['metadata']
+                section_name = section_metadata.get('section_name', '')
+                
+                if 'Q&A' in section_name:
+                    # Use Q&A-specific chunking that groups questions with answers
+                    section_chunks = self.chunk_generator.create_qa_grouped_chunks(
+                        section_text, section_metadata, chunk_size=1200, overlap=0
+                    )
+                elif 'Opening Remarks' in section_name:
+                    # Use no-overlap chunking for opening remarks (preserves JSON entry boundaries)
+                    section_chunks = self.chunk_generator.create_opening_remarks_chunks(
+                        section_text, section_metadata, chunk_size=chunk_size
+                    )
+                else:
+                    # Fallback to regular chunking for other sections
+                    section_chunks = self.chunk_generator.create_transcript_chunks(
+                        section_text, section_metadata, chunk_size, overlap
+                    )
+                
+                # Update global chunk IDs
+                for chunk in section_chunks:
+                    chunk['global_chunk_id'] = chunk_id_counter
+                    chunk['metadata']['global_chunk_id'] = chunk_id_counter
+                    chunk_id_counter += 1
+                
+                all_chunks.extend(section_chunks)
         
         # Create final dataset
         return {

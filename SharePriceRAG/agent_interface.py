@@ -8,6 +8,7 @@ from typing import Dict, List, Any, Optional, Union
 from datetime import datetime, timedelta, date
 from decimal import Decimal
 import statistics
+import pandas as pd
 
 from .main import get_share_prices
 from .config import SharePriceConfig
@@ -452,3 +453,145 @@ def compare_with_peers(ticker: str, peer_tickers: List[str], days_back: int = 90
     """
     
     return _perform_peer_comparison(ticker, peer_tickers, days_back)
+
+
+def get_raw_price_data_for_agent(ticker: str, days_back: int = 90) -> Dict[str, Any]:
+    """
+    Agent-friendly function to get raw price data as DataFrame for custom analysis
+    
+    Args:
+        ticker: Company ticker symbol (e.g., 'AAPL')
+        days_back: Number of days to retrieve (default: 90)
+        
+    Returns:
+        Structured dictionary with raw price DataFrame for agent analysis:
+        {
+            "success": bool,
+            "ticker": str,
+            "data": pd.DataFrame,        # Raw price data with columns: date, open, high, low, close, volume
+            "records_count": int,        # Number of price records
+            "date_range": dict,         # Start and end dates
+            "data_sources": dict,       # Breakdown of data sources
+            "cache_info": dict,         # Cache hit rate and performance
+            "metadata": dict            # Additional context
+        }
+    """
+    
+    try:
+        # Calculate date range
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days_back)
+        
+        # Get price data using existing infrastructure
+        result = get_share_prices(
+            tickers=[ticker],
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not result.success or not result.price_data:
+            return {
+                "success": False,
+                "ticker": ticker,
+                "data": pd.DataFrame(),
+                "records_count": 0,
+                "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
+                "data_sources": {},
+                "cache_info": {},
+                "metadata": {"error": "No price data available"},
+                "error": f"Unable to retrieve price data for {ticker}"
+            }
+        
+        # Filter data for the specific ticker
+        ticker_data = result.get_ticker_data(ticker)
+        if not ticker_data:
+            return {
+                "success": False,
+                "ticker": ticker,
+                "data": pd.DataFrame(),
+                "records_count": 0,
+                "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
+                "data_sources": {},
+                "cache_info": {},
+                "metadata": {"error": "No data found for ticker"},
+                "error": f"No price data found for {ticker}"
+            }
+        
+        # Sort by date
+        ticker_data.sort(key=lambda x: x.date)
+        
+        # Convert to DataFrame
+        df_data = []
+        data_sources = {}
+        
+        for price in ticker_data:
+            df_data.append({
+                'date': price.date,
+                'open': float(price.open_price) if price.open_price else None,
+                'high': float(price.high_price) if price.high_price else None,
+                'low': float(price.low_price) if price.low_price else None,
+                'close': float(price.close_price),
+                'adjusted_close': float(price.adjusted_close) if price.adjusted_close else None,
+                'volume': price.volume,
+                'source': price.source
+            })
+            
+            # Track data sources
+            source = price.source
+            data_sources[source] = data_sources.get(source, 0) + 1
+        
+        # Create DataFrame
+        df = pd.DataFrame(df_data)
+        df = df.set_index('date').sort_index()
+        
+        # Calculate date range from actual data
+        actual_start = df.index.min()
+        actual_end = df.index.max()
+        
+        # Cache information
+        cache_info = {
+            "total_records": result.total_records,
+            "cache_hit_rate": result.cache_hit_rate,
+            "records_from_cache": result.records_from_cache,
+            "records_fetched": result.records_fetched,
+            "processing_time_seconds": result.processing_time_seconds
+        }
+        
+        return {
+            "success": True,
+            "ticker": ticker,
+            "data": df,
+            "records_count": len(df),
+            "date_range": {
+                "start": actual_start.isoformat(),
+                "end": actual_end.isoformat(),
+                "requested_start": start_date.isoformat(),
+                "requested_end": end_date.isoformat()
+            },
+            "data_sources": data_sources,
+            "cache_info": cache_info,
+            "metadata": {
+                "days_requested": days_back,
+                "columns": list(df.columns),
+                "index_name": df.index.name,
+                "retrieval_timestamp": datetime.now().isoformat(),
+                "data_shape": df.shape,
+                "has_nulls": df.isnull().sum().to_dict()
+            }
+        }
+        
+    except Exception as e:
+        error_msg = f"Error retrieving raw price data for {ticker}: {str(e)}"
+        logger.error(error_msg)
+        
+        return {
+            "success": False,
+            "ticker": ticker,
+            "data": pd.DataFrame(),
+            "records_count": 0,
+            "date_range": {},
+            "data_sources": {},
+            "cache_info": {},
+            "metadata": {"error": str(e)},
+            "error": error_msg
+        }

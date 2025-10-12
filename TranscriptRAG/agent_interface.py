@@ -701,14 +701,30 @@ def search_transcripts_for_agent(
         
         # Try vector database search first
         try:
-            # Initialize vector store
+            # Initialize vector store with detailed logging
             vector_store = None
+            vector_store_type = None
+            
             if TranscriptVectorStore is not None:
-                vector_store = TranscriptVectorStore()
-            elif VECTOR_DB_AVAILABLE:
-                vector_store = VectorStore()
-            else:
+                try:
+                    vector_store = TranscriptVectorStore()
+                    vector_store_type = "TranscriptVectorStore"
+                    logger.info("DEBUG - Using TranscriptVectorStore")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize TranscriptVectorStore: {e}")
+            
+            if vector_store is None and VECTOR_DB_AVAILABLE:
+                try:
+                    vector_store = VectorStore()
+                    vector_store_type = "AgentSystem.VectorStore"
+                    logger.info("DEBUG - Using AgentSystem VectorStore")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize AgentSystem VectorStore: {e}")
+            
+            if vector_store is None:
                 raise Exception("No vector database available")
+            
+            logger.info(f"DEBUG - Vector store initialized: {vector_store_type}")
             
             table_name = f"transcripts_{ticker.lower()}"
             
@@ -794,43 +810,101 @@ def search_transcripts_for_agent(
                             search_filters["fiscal_year"] = list(set(year_filters))
                 # If neither provided, search all quarters (no quarter filter)
                 
-                # DEBUG: Log the search filters being applied
-                logger.info(f"DEBUG - Search filters being applied: {search_filters}")
-                logger.info(f"DEBUG - Selected quarters input: {quarters}")
-                logger.info(f"DEBUG - Available quarters from DB: {available_quarters_info.get('available_quarters', [])}")
+                # DEBUG: Enhanced logging for quarter filtering
+                logger.info(f"DEBUG - Quarter filtering analysis:")
+                logger.info(f"  quarters parameter: {quarters}")
+                logger.info(f"  quarters_back parameter: {quarters_back}")
+                logger.info(f"  available_quarters from DB: {available_quarters_info.get('available_quarters', [])}")
+                logger.info(f"  final search_filters: {search_filters}")
                 
-                # Execute vector search based on search method
-                if hasattr(vector_store, 'hybrid_search') and search_method == "vector_hybrid":
-                    search_results = vector_store.hybrid_search(
-                        table_name=table_name,
-                        query=query,
-                        k=k,
-                        filters=search_filters
-                    )
-                elif hasattr(vector_store, 'semantic_search') and search_method == "vector_semantic":
-                    search_results = vector_store.semantic_search(
-                        table_name=table_name,
-                        query=query,
-                        k=k,
-                        filters=search_filters
-                    )
-                elif hasattr(vector_store, 'keyword_search') and search_method in ["keyword", "bm25"]:
-                    search_results = vector_store.keyword_search(
-                        table_name=table_name,
-                        query=query,
-                        k=k,
-                        filters=search_filters
-                    )
-                elif hasattr(vector_store, 'search'):
-                    # Fallback to generic search method
-                    search_results = vector_store.search(
-                        table_name=table_name,
-                        query=query,
-                        k=k,
-                        filters=search_filters
-                    )
+                # Log quarter filtering decision path
+                if quarters:
+                    logger.info(f"  Filtering method: SPECIFIC_QUARTERS (using quarters parameter)")
+                elif quarters_back is not None:
+                    logger.info(f"  Filtering method: QUARTERS_BACK (using quarters_back={quarters_back})")
                 else:
-                    raise Exception("No suitable search method available")
+                    logger.info(f"  Filtering method: NO_FILTERING (searching all quarters)")
+                
+                # Execute vector search based on search method with defensive error handling
+                try:
+                    if hasattr(vector_store, 'hybrid_search') and search_method == "vector_hybrid":
+                        # Handle different vector store APIs
+                        if vector_store_type == "AgentSystem.VectorStore":
+                            # AgentSystem VectorStore might have different parameter expectations
+                            search_results = vector_store.hybrid_search(
+                                table_name=table_name,
+                                query=query,
+                                k=k,
+                                filters=search_filters or {}  # Ensure filters is not None
+                            )
+                        else:
+                            # TranscriptVectorStore API
+                            search_results = vector_store.hybrid_search(
+                                table_name=table_name,
+                                query=query,
+                                k=k,
+                                filters=search_filters
+                            )
+                    elif hasattr(vector_store, 'semantic_search') and search_method == "vector_semantic":
+                        search_results = vector_store.semantic_search(
+                            table_name=table_name,
+                            query=query,
+                            k=k,
+                            filters=search_filters or {}
+                        )
+                    elif hasattr(vector_store, 'keyword_search') and search_method in ["keyword", "bm25"]:
+                        search_results = vector_store.keyword_search(
+                            table_name=table_name,
+                            query=query,
+                            k=k,
+                            filters=search_filters or {}
+                        )
+                    elif hasattr(vector_store, 'search'):
+                        # Fallback to generic search method
+                        search_results = vector_store.search(
+                            table_name=table_name,
+                            query=query,
+                            k=k,
+                            filters=search_filters or {}
+                        )
+                    else:
+                        raise Exception("No suitable search method available")
+                    
+                    # Immediate validation of search results type
+                    if not isinstance(search_results, (list, dict, type(None))):
+                        logger.error(f"Vector store returned unexpected type {type(search_results)}: {search_results}")
+                        logger.error(f"Search method: {search_method}, Vector store: {vector_store_type}")
+                        search_results = []
+                        
+                except Exception as search_error:
+                    logger.error(f"Vector search method error: {search_error}")
+                    logger.error(f"Search method: {search_method}, Vector store type: {vector_store_type}")
+                    logger.error(f"Search filters: {search_filters}")
+                    # Set empty results and continue to fallback
+                    search_results = []
+                
+                # DEBUG: Log raw search results with type safety
+                logger.info(f"DEBUG - Raw search results type: {type(search_results)}")
+                logger.info(f"DEBUG - Raw search results value: {search_results}")
+                
+                # Safe type checking before calling len()
+                if search_results is None:
+                    logger.info("DEBUG - Search results is None")
+                    search_results = []
+                elif isinstance(search_results, int):
+                    logger.error(f"DEBUG - Search results is an integer: {search_results} - this indicates an error in vector store")
+                    search_results = []
+                elif not isinstance(search_results, list):
+                    logger.error(f"DEBUG - Search results is not a list: {type(search_results)}")
+                    search_results = []
+                else:
+                    logger.info(f"DEBUG - Raw search results count: {len(search_results)}")
+                    
+                if search_results and len(search_results) > 0:
+                    sample_result = search_results[0]
+                    logger.info(f"DEBUG - Sample result keys: {list(sample_result.keys())}")
+                    logger.info(f"DEBUG - Sample result metadata: {sample_result.get('metadata', {})}")
+                    logger.info(f"DEBUG - Sample result scores - hybrid: {sample_result.get('hybrid_score')}, similarity: {sample_result.get('similarity_score')}, bm25: {sample_result.get('bm25_score')}, distance: {sample_result.get('_raw_distance')}")
                 
                 chunks = []
                 # Handle TranscriptVectorStore response format (list of dicts) vs generic VectorStore format

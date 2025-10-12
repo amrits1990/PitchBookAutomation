@@ -19,6 +19,7 @@ from .main import get_company_news_chunks
 from .agent_interface import (
     get_news_for_agent,
     get_news_sentiment_analysis,
+    get_news_by_date_range_and_topic,
 )
 
 # Import vector-enhanced interfaces as primary interfaces

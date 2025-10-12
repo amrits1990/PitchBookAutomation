@@ -72,6 +72,15 @@ class MetadataExtractor:
             if metadata['period_end_date'] and metadata['fiscal_year_end']:
                 self._calculate_fiscal_info(metadata, content)
             
+            # Correct fiscal year using SEC Company Facts API if we have required fields
+            if metadata.get('ticker') and metadata.get('filing_date') and metadata.get('form_type'):
+                try:
+                    from fiscal_year_corrector import FiscalYearCorrector
+                    corrector = FiscalYearCorrector()
+                    metadata = corrector.correct_metadata_fiscal_year(metadata)
+                except Exception as e:
+                    print(f"Warning: Could not correct fiscal year using Company Facts API: {e}")
+            
         except Exception as e:
             print(f"Error extracting metadata: {e}")
             

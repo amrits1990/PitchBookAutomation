@@ -268,3 +268,263 @@
 [QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>, <NewsCategory.BUSINESS: 'business'>], days_back=30, max_articles_per_query=20, include_similar=True)
 
 [QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=10, include_similar=True)
+2025-09-29 17:11:52,310 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:11:52,428 - NewsRAG.main - INFO - Processing news for companies: ['APPLE', 'AAPL']
+2025-09-29 17:11:52,428 - NewsRAG.main - INFO - Categories: ['earnings', 'products', 'general']
+2025-09-29 17:11:52,428 - NewsRAG.main - INFO - Date range: 7 days back
+
+[QUERY] NewsQuery(companies=['APPLE', 'AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.PRODUCTS: 'products'>, <NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=5, include_similar=True)
+2025-09-29 17:11:52,428 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:11:52,428 - NewsRAG.tavily_direct - INFO - Searching news for APPLE in category earnings
+2025-09-29 17:11:54,125 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for APPLE - earnings
+2025-09-29 17:11:54,125 - NewsRAG.tavily_direct - INFO - Searching news for APPLE in category products
+2025-09-29 17:11:56,853 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for APPLE - products
+2025-09-29 17:11:56,853 - NewsRAG.tavily_direct - INFO - Searching news for APPLE in category general
+2025-09-29 17:11:59,592 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for APPLE - general
+2025-09-29 17:11:59,593 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category earnings
+2025-09-29 17:12:02,368 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for AAPL - earnings
+2025-09-29 17:12:02,368 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category products
+2025-09-29 17:12:05,001 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for AAPL - products
+2025-09-29 17:12:05,002 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category general
+2025-09-29 17:12:08,010 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for AAPL - general
+2025-09-29 17:12:08,010 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 13
+2025-09-29 17:12:08,010 - NewsRAG.main - INFO - Retrieved 13 ready-to-use chunks
+2025-09-29 17:12:08,010 - NewsRAG.main - INFO - Processing completed successfully in 15.72 seconds
+2025-09-29 17:12:08,101 - NewsRAG.main - INFO - Generated 13 chunks from 13 articles
+2025-09-29 17:12:08,103 - NewsRAG.main - INFO - Results saved to apple_news_example.json
+2025-09-29 17:43:27,247 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:43:27,247 - NewsRAG.main - INFO - Processing news for companies: ['APPLE', 'AAPL']
+2025-09-29 17:43:27,247 - NewsRAG.main - INFO - Categories: ['earnings', 'products', 'general']
+2025-09-29 17:43:27,247 - NewsRAG.main - INFO - Date range: 7 days back
+
+[QUERY] NewsQuery(companies=['APPLE', 'AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.PRODUCTS: 'products'>, <NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=5, include_similar=True)
+2025-09-29 17:43:27,264 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:43:27,264 - NewsRAG.tavily_direct - INFO - Searching news for APPLE in category earnings
+2025-09-29 17:43:28,233 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for APPLE - earnings
+2025-09-29 17:43:28,233 - NewsRAG.tavily_direct - INFO - Searching news for APPLE in category products
+2025-09-29 17:43:30,269 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for APPLE - products
+2025-09-29 17:43:30,269 - NewsRAG.tavily_direct - INFO - Searching news for APPLE in category general
+2025-09-29 17:43:32,401 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for APPLE - general
+2025-09-29 17:43:32,401 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category earnings
+2025-09-29 17:43:34,306 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for AAPL - earnings
+2025-09-29 17:43:34,306 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category products
+2025-09-29 17:43:36,420 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for AAPL - products
+2025-09-29 17:43:36,420 - NewsRAG.tavily_direct - INFO - Searching news for AAPL in category general
+2025-09-29 17:43:38,308 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for AAPL - general
+2025-09-29 17:43:38,308 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 13
+2025-09-29 17:43:38,308 - NewsRAG.main - INFO - Retrieved 13 ready-to-use chunks
+2025-09-29 17:43:38,308 - NewsRAG.main - INFO - Processing completed successfully in 11.06 seconds
+2025-09-29 17:43:38,308 - NewsRAG.main - INFO - Generated 13 chunks from 13 articles
+2025-09-29 17:43:38,308 - NewsRAG.main - INFO - Results saved to apple_news_example.json
+2025-09-29 17:43:38,320 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:43:38,320 - NewsRAG.main - INFO - Processing news for companies: ['NVDA']
+2025-09-29 17:43:38,320 - NewsRAG.main - INFO - Categories: ['general', 'earnings']
+2025-09-29 17:43:38,320 - NewsRAG.main - INFO - Date range: 7 days back
+
+[QUERY] NewsQuery(companies=['NVDA'], categories=[<NewsCategory.GENERAL: 'general'>, <NewsCategory.EARNINGS: 'earnings'>], days_back=7, max_articles_per_query=5, include_similar=True)
+2025-09-29 17:43:38,321 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:43:38,321 - NewsRAG.tavily_direct - INFO - Searching news for NVDA in category general
+2025-09-29 17:43:41,513 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for NVDA - general
+2025-09-29 17:43:41,513 - NewsRAG.tavily_direct - INFO - Searching news for NVDA in category earnings
+2025-09-29 17:43:44,050 - NewsRAG.tavily_direct - INFO - Retrieved 5 chunks for NVDA - earnings
+2025-09-29 17:43:44,050 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 7
+2025-09-29 17:43:44,050 - NewsRAG.main - INFO - Retrieved 7 ready-to-use chunks
+2025-09-29 17:43:44,050 - NewsRAG.main - INFO - Processing completed successfully in 5.74 seconds
+2025-09-29 17:43:44,050 - NewsRAG.main - INFO - Generated 7 chunks from 7 articles
+2025-09-29 17:43:44,065 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:43:44,065 - NewsRAG.main - INFO - Processing news for companies: ['TSLA']
+2025-09-29 17:43:44,065 - NewsRAG.main - INFO - Categories: ['general']
+2025-09-29 17:43:44,066 - NewsRAG.main - INFO - Date range: 14 days back
+
+[QUERY] NewsQuery(companies=['TSLA'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=14, max_articles_per_query=20, include_similar=True)
+2025-09-29 17:43:44,066 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:43:44,067 - NewsRAG.tavily_direct - INFO - Searching news for TSLA in category general
+2025-09-29 17:43:46,471 - NewsRAG.tavily_direct - INFO - Retrieved 20 chunks for TSLA - general
+2025-09-29 17:43:46,471 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 20
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Retrieved 20 ready-to-use chunks
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Processing completed successfully in 2.41 seconds
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Generated 20 chunks from 20 articles
+2025-09-29 17:43:46,471 - NewsRAG.agent_interface - INFO - Getting news for Apple from 2024-01-01 to 2024-01-31 on topic 'products' (days_back: 637)
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Processing news for companies: ['APPLE']
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Categories: ['products']
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Date range: 637 days back
+
+[QUERY] NewsQuery(companies=['APPLE'], categories=[<NewsCategory.PRODUCTS: 'products'>], days_back=637, max_articles_per_query=10, include_similar=True)
+2025-09-29 17:43:46,471 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:43:46,487 - NewsRAG.tavily_direct - INFO - Searching news for APPLE in category products
+2025-09-29 17:43:48,379 - NewsRAG.tavily_direct - INFO - Retrieved 10 chunks for APPLE - products
+2025-09-29 17:43:48,379 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 10
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Retrieved 10 ready-to-use chunks
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Processing completed successfully in 1.91 seconds
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Generated 10 chunks from 10 articles
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Processing news for companies: ['TSLA']
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Categories: ['general']
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Date range: 30 days back
+
+[QUERY] NewsQuery(companies=['TSLA'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=20, include_similar=True)
+2025-09-29 17:43:48,379 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:43:48,379 - NewsRAG.tavily_direct - INFO - Searching news for TSLA in category general
+2025-09-29 17:43:49,698 - NewsRAG.tavily_direct - INFO - Retrieved 20 chunks for TSLA - general
+2025-09-29 17:43:49,699 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 20
+2025-09-29 17:43:49,699 - NewsRAG.main - INFO - Retrieved 20 ready-to-use chunks
+2025-09-29 17:43:49,700 - NewsRAG.main - INFO - Processing completed successfully in 1.32 seconds
+2025-09-29 17:43:49,701 - NewsRAG.main - INFO - Generated 20 chunks from 20 articles
+2025-09-29 17:43:49,703 - NewsRAG.agent_interface - INFO - Getting news for Tesla from 2024-01-01 to 2024-02-29 on topic 'products' (days_back: 637)
+2025-09-29 17:43:49,710 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:43:49,710 - NewsRAG.main - INFO - Processing news for companies: ['TESLA']
+2025-09-29 17:43:49,710 - NewsRAG.main - INFO - Categories: ['products']
+2025-09-29 17:43:49,711 - NewsRAG.main - INFO - Date range: 637 days back
+
+[QUERY] NewsQuery(companies=['TESLA'], categories=[<NewsCategory.PRODUCTS: 'products'>], days_back=637, max_articles_per_query=15, include_similar=True)
+2025-09-29 17:43:49,712 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:43:49,713 - NewsRAG.tavily_direct - INFO - Searching news for TESLA in category products
+2025-09-29 17:43:52,179 - NewsRAG.tavily_direct - INFO - Retrieved 15 chunks for TESLA - products
+2025-09-29 17:43:52,179 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 15
+2025-09-29 17:43:52,179 - NewsRAG.main - INFO - Retrieved 15 ready-to-use chunks
+2025-09-29 17:43:52,179 - NewsRAG.main - INFO - Processing completed successfully in 2.47 seconds
+2025-09-29 17:43:52,179 - NewsRAG.main - INFO - Generated 15 chunks from 15 articles
+2025-09-29 17:43:52,182 - NewsRAG.main - INFO - Starting NewsRAG processing
+2025-09-29 17:43:52,182 - NewsRAG.main - INFO - Processing news for companies: ['TSLA']
+2025-09-29 17:43:52,182 - NewsRAG.main - INFO - Categories: ['general']
+2025-09-29 17:43:52,182 - NewsRAG.main - INFO - Date range: 21 days back
+
+[QUERY] NewsQuery(companies=['TSLA'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=21, max_articles_per_query=20, include_similar=True)
+2025-09-29 17:43:52,182 - NewsRAG.main - INFO - Retrieving news chunks from Tavily...
+2025-09-29 17:43:52,182 - NewsRAG.tavily_direct - INFO - Searching news for TSLA in category general
+2025-09-29 17:43:53,502 - NewsRAG.tavily_direct - INFO - Retrieved 20 chunks for TSLA - general
+2025-09-29 17:43:53,502 - NewsRAG.tavily_direct - INFO - Total unique chunks retrieved: 20
+2025-09-29 17:43:53,502 - NewsRAG.main - INFO - Retrieved 20 ready-to-use chunks
+2025-09-29 17:43:53,502 - NewsRAG.main - INFO - Processing completed successfully in 1.32 seconds
+2025-09-29 17:43:53,502 - NewsRAG.main - INFO - Generated 20 chunks from 20 articles
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.MARKET: 'market'>], days_back=30, max_articles_per_query=10, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=7, max_articles_per_query=20, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.EARNINGS: 'earnings'>, <NewsCategory.MARKET: 'market'>, <NewsCategory.FINANCIAL: 'financial'>, <NewsCategory.BUSINESS: 'business'>], days_back=90, max_articles_per_query=25, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=365, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['MSFT'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=180, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['MSFT'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=90, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['MSFT'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=30, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['MSFT'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=180, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=180, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=180, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['MSFT'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=365, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=365, max_articles_per_query=50, include_similar=True)
+
+[QUERY] NewsQuery(companies=['AAPL'], categories=[<NewsCategory.GENERAL: 'general'>], days_back=730, max_articles_per_query=50, include_similar=True)

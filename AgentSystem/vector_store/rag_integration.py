@@ -1,165 +1,155 @@
 """
-Integration helpers for RAG packages with vector storage
-Provides simple functions to update existing agent interfaces
+RAG Integration utilities for seamless integration with TranscriptRAG and AnnualReportRAG
 """
 
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, List, Optional
 from .lance_store import VectorStore
 from ..config import config
 
 logger = logging.getLogger(__name__)
 
-
-class RAGVectorIntegration:
-    """Helper class to integrate RAG packages with vector storage"""
+class RAGVectorStore(VectorStore):
+    """
+    Extended VectorStore class with RAG-specific convenience methods
+    """
     
-    def __init__(self, vector_store: Optional[VectorStore] = None):
-        self.vector_store = vector_store or VectorStore()
+    def __init__(self, db_path: Optional[str] = None):
+        super().__init__(db_path)
+        self.logger = logging.getLogger(f"{self.__class__.__name__}")
     
-    def enhance_index_function(
-        self,
-        original_index_func,
-        table_name: str,
-        content_field: str = "content"
-    ):
+    def health_check(self) -> Dict[str, Any]:
         """
-        Enhance an existing index function to also store in vector database
+        Perform health check for RAG systems
+        Returns status information about vector store availability
+        """
+        try:
+            # Check if database path exists and is accessible
+            db_accessible = self.db_path.exists()
+            
+            # Check if we can connect to database
+            tables = self.list_tables()
+            
+            # Check if embeddings model can be loaded
+            try:
+                _ = self.embeddings_model
+                embeddings_available = True
+            except Exception:
+                embeddings_available = False
+            
+            return {
+                "success": True,
+                "database_accessible": db_accessible,
+                "available_tables": tables,
+                "table_count": len(tables),
+                "embeddings_available": embeddings_available,
+                "db_path": str(self.db_path)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "database_accessible": False,
+                "available_tables": [],
+                "table_count": 0,
+                "embeddings_available": False
+            }
+    
+    def get_rag_status(self) -> Dict[str, Any]:
+        """Get comprehensive status for RAG system integration"""
+        health = self.health_check()
+        
+        # Check for common RAG tables
+        common_tables = []
+        if health["success"]:
+            for table_name in health["available_tables"]:
+                table_info = self.get_table_info(table_name)
+                if table_info.get("exists"):
+                    common_tables.append({
+                        "name": table_name,
+                        "row_count": table_info.get("row_count", 0)
+                    })
+        
+        return {
+            "vector_store_available": health["success"],
+            "total_tables": len(common_tables),
+            "tables": common_tables,
+            "configuration": {
+                "embedding_model": config.embedding_model,
+                "bm25_weight": config.bm25_weight,
+                "semantic_weight": config.semantic_weight
+            }
+        }
+    
+    def setup_for_rag(self, rag_type: str) -> Dict[str, Any]:
+        """
+        Setup vector store for specific RAG type
         
         Args:
-            original_index_func: Original index function from RAG package
-            table_name: Name for the vector table
-            content_field: Field containing the text content
-            
-        Returns:
-            Enhanced function that stores in vector DB and returns original result
+            rag_type: Either 'transcript' or 'annual_report'
         """
-        def enhanced_index(*args, **kwargs):
-            # Call original function first
-            result = original_index_func(*args, **kwargs)
+        try:
+            table_name = f"{rag_type}_chunks"
             
-            # If successful, also store in vector database
-            if result.get("success") and result.get("chunks"):
-                try:
-                    # Index in vector database
-                    vector_result = self.vector_store.index_documents(
-                        table_name=table_name,
-                        documents=result["chunks"],
-                        text_field=content_field,
-                        overwrite=False  # Append by default
-                    )
-                    
-                    # Add vector storage info to result
-                    result["vector_storage"] = vector_result
-                    logger.info(f"Indexed {len(result['chunks'])} chunks in vector store table '{table_name}'")
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to store in vector database: {e}")
-                    result["vector_storage"] = {"success": False, "error": str(e)}
+            # Ensure database directory exists
+            self.db_path.mkdir(parents=True, exist_ok=True)
             
-            return result
-        
-        return enhanced_index
-    
-    def enhance_search_function(
-        self,
-        original_search_func,
-        table_name: str,
-        use_vector_search: bool = True
-    ):
-        """
-        Enhance an existing search function to use vector search when available
-        
-        Args:
-            original_search_func: Original search function from RAG package
-            table_name: Name of the vector table
-            use_vector_search: Whether to use vector search or fall back to original
+            # Check if table already exists
+            table_info = self.get_table_info(table_name)
             
-        Returns:
-            Enhanced function that uses vector search when available
-        """
-        def enhanced_search(*args, **kwargs):
-            # Extract common parameters
-            query = kwargs.get("query", args[1] if len(args) > 1 else "")
-            k = kwargs.get("k", 20)
+            return {
+                "success": True,
+                "rag_type": rag_type,
+                "table_name": table_name,
+                "table_exists": table_info.get("exists", False),
+                "row_count": table_info.get("row_count", 0),
+                "ready_for_indexing": True
+            }
             
-            # Try vector search first if enabled
-            if use_vector_search and query:
-                try:
-                    # Check if table exists
-                    table_info = self.vector_store.get_table_info(table_name)
-                    
-                    if table_info.get("exists") and table_info.get("document_count", 0) > 0:
-                        # Use hybrid search
-                        vector_results = self.vector_store.hybrid_search(
-                            table_name=table_name,
-                            query=query,
-                            k=k,
-                            semantic_weight=config.semantic_weight,
-                            bm25_weight=config.bm25_weight
-                        )
-                        
-                        if vector_results:
-                            logger.info(f"Used vector search for table '{table_name}', found {len(vector_results)} results")
-                            
-                            # Format results to match original function output
-                            return {
-                                "success": True,
-                                "ticker": args[0] if args else kwargs.get("ticker", "unknown"),
-                                "query": query,
-                                "results": vector_results,
-                                "returned": len(vector_results),
-                                "total_candidates": table_info.get("document_count", 0),
-                                "search_method": "vector_hybrid",
-                                "metadata": {
-                                    "k": k,
-                                    "table_name": table_name,
-                                    "semantic_weight": config.semantic_weight,
-                                    "bm25_weight": config.bm25_weight
-                                }
-                            }
-                
-                except Exception as e:
-                    logger.warning(f"Vector search failed, falling back to original: {e}")
-            
-            # Fall back to original search function
-            result = original_search_func(*args, **kwargs)
-            if result.get("success"):
-                result["search_method"] = "original_fallback"
-            
-            return result
-        
-        return enhanced_search
+        except Exception as e:
+            self.logger.error(f"Setup failed for {rag_type}: {e}")
+            return {
+                "success": False,
+                "rag_type": rag_type,
+                "error": str(e),
+                "ready_for_indexing": False
+            }
 
+# Convenience function for RAG systems
+def get_vector_store() -> RAGVectorStore:
+    """Get a configured vector store instance for RAG systems"""
+    return RAGVectorStore()
 
-# Global integration instance for easy access
-rag_vector_integration = RAGVectorIntegration()
-
-
-def enhance_rag_package(
-    index_func,
-    search_func, 
-    table_name: str,
-    content_field: str = "content"
-) -> tuple:
-    """
-    Simple function to enhance both index and search functions for a RAG package
-    
-    Args:
-        index_func: Original index function
-        search_func: Original search function  
-        table_name: Name for vector table
-        content_field: Field containing text content
+def check_vector_dependencies() -> Dict[str, Any]:
+    """Check if all vector database dependencies are available"""
+    try:
+        import lancedb
+        import sentence_transformers
+        import rank_bm25
+        import pandas
+        import numpy
         
-    Returns:
-        Tuple of (enhanced_index_func, enhanced_search_func)
-    """
-    enhanced_index = rag_vector_integration.enhance_index_function(
-        index_func, table_name, content_field
-    )
-    
-    enhanced_search = rag_vector_integration.enhance_search_function(
-        search_func, table_name, use_vector_search=True
-    )
-    
-    return enhanced_index, enhanced_search
+        return {
+            "available": True,
+            "lancedb": True,
+            "sentence_transformers": True,
+            "rank_bm25": True,
+            "pandas": True,
+            "numpy": True
+        }
+        
+    except ImportError as e:
+        missing_deps = []
+        for dep in ["lancedb", "sentence_transformers", "rank_bm25", "pandas", "numpy"]:
+            try:
+                __import__(dep.replace("-", "_"))
+            except ImportError:
+                missing_deps.append(dep)
+        
+        return {
+            "available": False,
+            "missing_dependencies": missing_deps,
+            "install_command": "pip install lancedb>=0.13.0 rank-bm25>=0.2.2 sentence-transformers pandas numpy"
+        }

@@ -1,97 +1,51 @@
 """
-Main configuration for AgentSystem
-Simple and clear configuration management
+Configuration for AgentSystem - Vector Database and RAG Support
 """
 
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from dotenv import load_dotenv
 
+# Load environment variables from main .env file
+env_path = Path(__file__).parent.parent.parent / '.env'
+load_dotenv(env_path)
 
-@dataclass
-class AgentConfig:
-    """Simple configuration for the Agent System"""
+class AgentSystemConfig:
+    """Configuration class for AgentSystem vector database operations"""
     
-    # Vector Database Settings
-    vector_db_path: str = "./data/vector_store"
-    embedding_model: str = "all-mpnet-base-v2"  # Better performance for financial documents
-    
-    # Search Settings
-    default_search_k: int = 20
-    bm25_weight: float = 0.4  # Weight for BM25 in hybrid search (better for financial terms)
-    semantic_weight: float = 0.6  # Weight for semantic search
-    
-    # Chunk Settings
-    max_chunk_size: int = 1000
-    chunk_overlap: int = 200
-    
-    # API Settings
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    
-    # LLM Settings
-    openrouter_api_key: Optional[str] = None
-    openrouter_model: str = "openai/gpt-4o-mini"
-    openai_api_key: Optional[str] = None
-    
-    # Logging
-    log_level: str = "INFO"
-    
-    def __post_init__(self):
-        """Initialize LLM client after dataclass creation"""
-        self._llm_client = None
-        self._setup_llm_client()
-    
-    def _setup_llm_client(self):
-        """Setup LLM client based on available API keys"""
-        try:
-            if self.openrouter_api_key:
-                # Use OpenRouter
-                import openai
-                self._llm_client = openai.OpenAI(
-                    api_key=self.openrouter_api_key,
-                    base_url="https://openrouter.ai/api/v1"
-                )
-            elif self.openai_api_key:
-                # Use OpenAI directly
-                import openai
-                self._llm_client = openai.OpenAI(api_key=self.openai_api_key)
-            else:
-                self._llm_client = None
-        except ImportError:
-            self._llm_client = None
-    
-    @property
-    def llm_client(self):
-        """Get the LLM client"""
-        return self._llm_client
-    
-    @classmethod
-    def from_env(cls) -> "AgentConfig":
-        """Create config from environment variables"""
-        return cls(
-            vector_db_path=os.getenv("VECTOR_DB_PATH", "./data/vector_store"),
-            embedding_model=os.getenv("EMBEDDING_MODEL", "all-mpnet-base-v2"),
-            default_search_k=int(os.getenv("DEFAULT_SEARCH_K", "20")),
-            bm25_weight=float(os.getenv("BM25_WEIGHT", "0.3")),
-            semantic_weight=float(os.getenv("SEMANTIC_WEIGHT", "0.7")),
-            api_host=os.getenv("API_HOST", "0.0.0.0"),
-            api_port=int(os.getenv("API_PORT", "8000")),
-            openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
-            openrouter_model=os.getenv("OPENROUTER_REFINEMENT_MODEL", "openai/gpt-4o-mini"),
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            log_level=os.getenv("LOG_LEVEL", "INFO"),
-        )
+    def __init__(self):
+        # Vector database configuration
+        self.embedding_model = os.getenv('EMBEDDING_MODEL', 'all-mpnet-base-v2')
+        self.bm25_weight = float(os.getenv('BM25_WEIGHT', '0.4'))
+        self.semantic_weight = float(os.getenv('SEMANTIC_WEIGHT', '0.6'))
+        self.default_search_k = int(os.getenv('DEFAULT_SEARCH_K', '20'))
+        
+        # Vector database path
+        self.vector_db_path = self.get_vector_db_path()
+        
+        # Ensure vector database directory exists
+        self.vector_db_path.mkdir(parents=True, exist_ok=True)
     
     def get_vector_db_path(self) -> Path:
-        """Get vector database path as Path object"""
-        return Path(self.vector_db_path)
+        """Get the path for vector database storage"""
+        base_dir = Path(__file__).parent.parent.parent  # Go up to PitchBookGenerator level
+        return base_dir / "data" / "vector_store"
     
-    def ensure_directories(self) -> None:
-        """Create necessary directories"""
-        self.get_vector_db_path().mkdir(parents=True, exist_ok=True)
+    def get_embeddings_config(self) -> dict:
+        """Get embeddings configuration"""
+        return {
+            "model_name": self.embedding_model,
+            "device": "cpu",  # Use CPU for compatibility
+            "normalize_embeddings": True
+        }
+    
+    def get_search_config(self) -> dict:
+        """Get search configuration"""
+        return {
+            "bm25_weight": self.bm25_weight,
+            "semantic_weight": self.semantic_weight,
+            "default_k": self.default_search_k
+        }
 
-
-# Default configuration instance
-config = AgentConfig.from_env()
+# Global config instance
+config = AgentSystemConfig()

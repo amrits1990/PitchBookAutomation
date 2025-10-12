@@ -170,13 +170,14 @@ def display_chunk_metadata(results):
         print(f"    Top 3: {list(sorted(sections))[:3]}...")
 
 
-def run_retrieval(ticker: str, query: str, k: int = 20, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def run_retrieval(ticker: str, query: str, k: int = 20, time_period: str = "latest", filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run search query against indexed reports"""
     filters = filters or {}
     res = search_report_for_agent(
         ticker=ticker,
         query=query,
         k=k,
+        time_period=time_period,
         filters=filters,
         # Do not auto-download/index when retrieval finds no matches
         fallback_to_api_on_empty=False,
@@ -185,15 +186,15 @@ def run_retrieval(ticker: str, query: str, k: int = 20, filters: Optional[Dict[s
     return res
 
 
-def search_reports(ticker: str, query: str, k: int = 20) -> Dict[str, Any]:
+def search_reports(ticker: str, query: str, k: int = 20, time_period: str = "latest") -> Dict[str, Any]:
     """Search reports for a ticker and return results with analysis.
     
     Returns the full search result, including agent information and chunk metadata.
     """
-    print(f"\n=== Search: {ticker.upper()} | k={k} ===")
+    print(f"\n=== Search: {ticker.upper()} | k={k} | time_period={time_period} ===")
     print(f"Query: {query}")
     
-    result = run_retrieval(ticker, query, k)
+    result = run_retrieval(ticker, query, k, time_period)
     
     if not result.get('success'):
         print(f"❌ Search failed: {result.get('error', 'Unknown error')}")
@@ -248,8 +249,38 @@ if __name__ == "__main__":
         k = int(input("Top-K (default 20): ") or "20")
     except ValueError:
         k = 20
-
-    result = search_reports(ticker, query, k)
+    
+    # Time period selection
+    print("\nTime period options:")
+    print("  1. latest - Most recent single report (10-K or 10-Q, whichever is newer)")
+    print("  2. latest_10k_and_10q - Most recent 10-K and 10-Q (both)")
+    print("  3. latest_10k - Most recent 10-K only")
+    print("  4. latest_10q - Most recent 10-Q only")
+    print("  5. last_n_reports - Last N reports")
+    
+    time_period_choice = input("Select time period (1-5, default 1): ").strip() or "1"
+    
+    time_period_map = {
+        "1": "latest",
+        "2": "latest_10k_and_10q",
+        "3": "latest_10k", 
+        "4": "latest_10q",
+        "5": "last_n_reports"
+    }
+    
+    time_period = time_period_map.get(time_period_choice, "latest")
+    
+    if time_period == "last_n_reports":
+        try:
+            n_reports = int(input("How many recent reports? (default 3): ") or "3")
+            time_period = f"last_{n_reports}_reports"
+        except ValueError:
+            print("Invalid number, using default of 3")
+            time_period = "last_3_reports"
+    
+    print(f"\nUsing time period: {time_period}")
+    
+    result = search_reports(ticker, query, k, time_period)
     
     if result.get('success'):
         # Optional evaluation
@@ -261,23 +292,3 @@ if __name__ == "__main__":
             print("\n🤖 LLM Evaluation:")
             print(json.dumps(eval_res, indent=2))
     
-    # Save result for analysis in AnnualReportRAG/data/search_results/
-    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    # Create search_results directory within AnnualReportRAG
-    search_results_dir = Path(__file__).parent.parent / "data" / "search_results"
-    search_results_dir.mkdir(parents=True, exist_ok=True)
-    
-    out_path = search_results_dir / f"search_result_{ticker}_{ts}.json"
-    
-    def _json_default(o):
-        try:
-            if isinstance(o, (datetime, date)):
-                return o.isoformat()
-        except Exception:
-            pass
-        return str(o)
-    
-    with open(out_path, 'w', encoding='utf-8') as f:
-        json.dump(result, f, indent=2, default=_json_default)
-    print(f"\n💾 Search result saved to: {out_path}")

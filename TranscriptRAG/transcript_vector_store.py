@@ -1,7 +1,7 @@
 """
 TranscriptRAG-specific LanceDB vector store
 - Adds denormalized metadata columns for robust transcript filtering without impacting other RAGs
-- Mirrors the shared VectorStore API for index and hybrid search  
+- Mirrors the shared VectorStore API for index and hybrid search
 - Optimized for earnings call transcript metadata (quarters, speakers, sections)
 """
 
@@ -10,6 +10,12 @@ from datetime import datetime, date
 from pathlib import Path
 import json
 import logging
+import re
+import sys
+import os
+
+# Add parent directory to import shared utilities
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import query enhancer
 try:
@@ -34,6 +40,15 @@ except ImportError as e:
     VECTOR_DEPENDENCIES_AVAILABLE = False
     print(f"Warning: Vector database dependencies not available: {e}")
     print("Run 'pip install lancedb>=0.13.0 rank-bm25>=0.2.2' to enable vector search")
+
+# Import robust embedding loader for reliable model loading
+try:
+    from shared_utils import create_embedding_loader
+    ROBUST_LOADER_AVAILABLE = True
+except ImportError as e:
+    ROBUST_LOADER_AVAILABLE = False
+    logger_temp = logging.getLogger(__name__)
+    logger_temp.warning(f"Robust embedding loader not available: {e}. Falling back to standard loading.")
 
 # Try to import config from AgentSystem, with fallback
 try:
@@ -81,12 +96,13 @@ class TranscriptVectorStore:
     def __init__(self, db_path: Optional[str] = None):
         if not VECTOR_DEPENDENCIES_AVAILABLE:
             raise ImportError("Vector database dependencies not available. Run: pip install lancedb>=0.13.0 rank-bm25>=0.2.2")
-        
+
         self.db_path = db_path or str(config.get_vector_db_path())
         self.embedding_model_name = config.embedding_model
         Path(self.db_path).mkdir(parents=True, exist_ok=True)
         self._db = None
         self._encoder = None
+        self._embedding_loader = None  # Robust embedding loader
         self._tables: Dict[str, Any] = {}
         self.query_enhancer = TranscriptQueryEnhancer()
 
@@ -98,15 +114,42 @@ class TranscriptVectorStore:
 
     @property
     def encoder(self) -> SentenceTransformer:
+        """Load embedding model with robust error handling."""
         if self._encoder is None:
-            logger.info(f"Loading embedding model: {self.embedding_model_name}")
-            self._encoder = SentenceTransformer(self.embedding_model_name)
+            if ROBUST_LOADER_AVAILABLE:
+                # Use robust loader with retry logic and cache management
+                if self._embedding_loader is None:
+                    self._embedding_loader = create_embedding_loader(
+                        model_name=self.embedding_model_name,
+                        max_retries=3,
+                        retry_delay=2.0
+                    )
+                logger.info(f"Loading embedding model with robust loader: {self.embedding_model_name}")
+                self._encoder = self._embedding_loader.load_model()
+            else:
+                # Fallback to standard loading
+                logger.info(f"Loading embedding model (standard): {self.embedding_model_name}")
+                self._encoder = SentenceTransformer(self.embedding_model_name)
         return self._encoder
 
     def create_embeddings(self, texts: List[str]) -> np.ndarray:
+        """Create embeddings with automatic error recovery."""
         if not texts:
             return np.array([])
-        return self.encoder.encode(texts, show_progress_bar=len(texts) > 10)
+
+        if ROBUST_LOADER_AVAILABLE and self._embedding_loader is not None:
+            # Use robust loader's encode method with built-in error handling
+            try:
+                return self._embedding_loader.encode(
+                    texts,
+                    show_progress_bar=len(texts) > 10
+                )
+            except Exception as e:
+                logger.error(f"Robust embedding creation failed: {e}")
+                raise
+        else:
+            # Fallback to standard encoding
+            return self.encoder.encode(texts, show_progress_bar=len(texts) > 10)
 
     def index_documents(self, table_name: str, documents: List[Dict[str, Any]], text_field: str = "content", overwrite: bool = False) -> Dict[str, Any]:
         try:
@@ -279,6 +322,12 @@ class TranscriptVectorStore:
                             except Exception:
                                 pass  # If still fails, continue without filters
             results = search.limit(k).to_list()
+            
+            # Add defensive type checking for search results
+            if not isinstance(results, (list, tuple)):
+                logger.error(f"LanceDB search returned unexpected type: {type(results)} = {results}")
+                return []
+            
             out = []
             for r in results:
                 meta = r.get("metadata", "{}")
@@ -298,11 +347,18 @@ class TranscriptVectorStore:
                 if not meta.get("speaker") and meta.get("primary_speaker"):
                     meta["speaker"] = meta["primary_speaker"]
                 
+                # Convert distance to normalized similarity score (0-1 range, higher is better)
+                distance = float(r.get("_distance", 1.0))
+                # Use exponential decay to convert distance to similarity
+                # Cosine distance ranges 0-2, this maps it to roughly 0-1 similarity
+                similarity_score = max(0.0, min(1.0, 1.0 / (1.0 + distance)))
+                
                 out.append({
                     "content": r.get("content", ""),
                     "metadata": meta,
-                    # Convert distance to a monotonic similarity (higher is better)
-                    "similarity_score": -float(r.get("_distance", 0.0)),
+                    "similarity_score": similarity_score,
+                    "relevance_score": similarity_score,  # Alias for compatibility
+                    "_raw_distance": distance,  # Keep original distance for debugging
                     "id": r.get("id", ""),
                 })
             return out
@@ -406,10 +462,19 @@ class TranscriptVectorStore:
             logger.error(f"TranscriptVectorStore keyword_search error: {e}")
             return []
 
-    def hybrid_search(self, table_name: str, query: str, k: int = 20, semantic_weight: float = 0.7, bm25_weight: float = 0.3, filters: Optional[Dict[str, Any]] = None, enhance_query: bool = True) -> List[Dict[str, Any]]:
+    def hybrid_search(self, table_name: str, query: str, k: int = 20, semantic_weight: float = 0.4, bm25_weight: float = 0.6, filters: Optional[Dict[str, Any]] = None, enhance_query: bool = True) -> List[Dict[str, Any]]:
         try:
             semantic_results = self.semantic_search(table_name, query, k=k*2, filters=filters)
             keyword_results = self.keyword_search(table_name, query, k=k*2, filters=filters, enhance_query=enhance_query)
+            
+            # Defensive type checking for search results
+            if not isinstance(semantic_results, list):
+                logger.error(f"Semantic search returned non-list type: {type(semantic_results)} = {semantic_results}")
+                semantic_results = []
+            if not isinstance(keyword_results, list):
+                logger.error(f"Keyword search returned non-list type: {type(keyword_results)} = {keyword_results}")
+                keyword_results = []
+            
             def normalize(results: List[Dict[str, Any]], field: str) -> Dict[str, float]:
                 if not results:
                     return {}
@@ -421,17 +486,71 @@ class TranscriptVectorStore:
                 return {r["id"]: (r[field] - mn) / rng for r in results if field in r}
             sem_scores = normalize(semantic_results, "similarity_score")
             bm_scores = normalize(keyword_results, "bm25_score")
+            # Content quality filter patterns
+            def is_low_quality_content(content: str) -> bool:
+                """Filter out operator announcements and other low-quality content"""
+                content_lower = content.lower().strip()
+                
+                # Operator announcement patterns
+                operator_patterns = [
+                    r"our next question is from",
+                    r"next question.*from",
+                    r"operator.*:",
+                    r"thank you.*next",
+                    r"we'll take.*question.*from",
+                    r"question.*from.*with",
+                    r"^q \(operator\):",
+                    r"^thank you\. *$",
+                    r"thank you\. our next",
+                ]
+                
+                for pattern in operator_patterns:
+                    if re.search(pattern, content_lower):
+                        return True
+                
+                # Very short content (likely not substantial)
+                if len(content.strip()) < 50:
+                    return True
+                    
+                return False
+            
             all_docs: Dict[str, Dict[str, Any]] = {}
             for r in semantic_results:
                 all_docs[r["id"]] = dict(r)
-                all_docs[r["id"]]["hybrid_score"] = semantic_weight * sem_scores.get(r["id"], 0.0)
+                base_score = semantic_weight * sem_scores.get(r["id"], 0.0)
+                
+                # Apply content quality penalty
+                content = r.get("content", "")
+                if is_low_quality_content(content):
+                    logger.debug(f"Content quality penalty applied to: {content[:100]}...")
+                    base_score *= 0.1  # Heavy penalty for low-quality content
+                
+                all_docs[r["id"]]["hybrid_score"] = base_score
+                
             for r in keyword_results:
                 if r["id"] in all_docs:
-                    all_docs[r["id"]]["hybrid_score"] += bm25_weight * bm_scores.get(r["id"], 0.0)
+                    keyword_score = bm25_weight * bm_scores.get(r["id"], 0.0)
+                    
+                    # Apply content quality penalty
+                    content = r.get("content", "")
+                    if is_low_quality_content(content):
+                        logger.debug(f"Content quality penalty applied (BM25-existing): {content[:100]}...")
+                        keyword_score *= 0.1
+                    
+                    all_docs[r["id"]]["hybrid_score"] += keyword_score
                     all_docs[r["id"]]["bm25_score"] = r.get("bm25_score")
                 else:
                     all_docs[r["id"]] = dict(r)
-                    all_docs[r["id"]]["hybrid_score"] = bm25_weight * bm_scores.get(r["id"], 0.0)
+                    keyword_score = bm25_weight * bm_scores.get(r["id"], 0.0)
+                    
+                    # Apply content quality penalty
+                    content = r.get("content", "")
+                    if is_low_quality_content(content):
+                        logger.debug(f"Content quality penalty applied (BM25-new): {content[:100]}...")
+                        keyword_score *= 0.1
+                    
+                    all_docs[r["id"]]["hybrid_score"] = keyword_score
+            
             return sorted(all_docs.values(), key=lambda x: x["hybrid_score"], reverse=True)[:k]
         except Exception as e:
             logger.error(f"TranscriptVectorStore hybrid_search error: {e}")

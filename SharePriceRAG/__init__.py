@@ -18,7 +18,7 @@ from .database import SharePriceDatabase
 from .models import PriceData, PriceQuery, PriceResult
 from .config import SharePriceConfig
 from .main import get_share_prices, get_ticker_summary, health_check, cleanup_database
-from .agent_interface import get_price_analysis_for_agent, compare_with_peers
+from .agent_interface import get_price_analysis_for_agent, compare_with_peers, get_raw_price_data_for_agent
 
 __version__ = "1.0.0"
 __author__ = "PitchBook Generator"
@@ -31,6 +31,7 @@ __all__ = [
     'cleanup_database',
     'get_price_analysis_for_agent',  # Agent-friendly interface
     'compare_with_peers',            # Peer comparison for agents
+    'get_raw_price_data_for_agent',  # Raw DataFrame for custom analysis
     'SharePriceClient',
     'SharePriceDatabase',
     'SharePriceConfig',
